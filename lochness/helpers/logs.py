@@ -8,11 +8,14 @@ from pathlib import Path
 from typing import List
 
 from lochness.helpers import config
+from lochness.logs.handlers import BatchedPostgresLogHandler
 
 logger = logging.getLogger(__name__)
 
 
-def configure_logging(config_file: Path, module_name: str, logger: logging.Logger):
+def configure_logging(
+    config_file: Path, module_name: str, logger: logging.Logger, use_db: bool = True
+) -> None:
     """
     Configures logging for a given module using the specified configuration file.
 
@@ -57,10 +60,14 @@ def configure_logging(config_file: Path, module_name: str, logger: logging.Logge
     logging.getLogger().addHandler(file_handler)
     logger.info(f"Logging to {log_file}")
 
+    if use_db:
+        db_handler = BatchedPostgresLogHandler(config_file=config_file)
+        db_handler.setLevel(logging.DEBUG)
+        logging.getLogger().addHandler(db_handler)
+        logger.info("Logging to PostgreSQL database")
 
-def silence_logs(
-    noisy_modules: List[str], target_level: int = logging.INFO
-) -> None:
+
+def silence_logs(noisy_modules: List[str], target_level: int = logging.INFO) -> None:
     """
     Silences logs from specified modules.
 

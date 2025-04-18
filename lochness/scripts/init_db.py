@@ -30,7 +30,6 @@ from lochness.helpers import utils, logs
 from lochness import models
 
 MODULE_NAME = "lochness.scripts.init_db"
-INSTANCE_NAME = MODULE_NAME
 
 console = utils.get_console()
 
@@ -61,7 +60,9 @@ def initialize_db(config_file: Path):
     models.init_db(config_file=config_file)
 
     complete_log = models.Logs(
-        log_message="Initialized database",
+        log_message={
+            "message": "Database initialized",
+        },
         log_level="INFO"
     )
     complete_log.insert(config_file=config_file)
@@ -70,7 +71,7 @@ def initialize_db(config_file: Path):
 if __name__ == "__main__":
     config_file = utils.get_config_file_path()
     logs.configure_logging(
-        config_file=config_file, module_name=MODULE_NAME, logger=logger
+        config_file=config_file, module_name=MODULE_NAME, logger=logger, use_db=False
     )
 
     console.rule(f"[bold red]{MODULE_NAME}")
