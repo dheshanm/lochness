@@ -20,6 +20,7 @@ class Project(BaseModel):
 
     project_id: str
     project_name: str
+    project_is_active: bool = True
     project_metadata: Dict[str, Any]
 
     @staticmethod
@@ -31,6 +32,7 @@ class Project(BaseModel):
             CREATE TABLE projects (
                 project_id TEXT PRIMARY KEY,
                 project_name TEXT NOT NULL,
+                project_is_active BOOLEAN DEFAULT TRUE NOT NULL,
                 project_metadata JSONB NOT NULL
             );
         """
@@ -66,8 +68,11 @@ class Project(BaseModel):
         """
         metadata = db.sanitize_json(self.project_metadata)
         sql_query = f"""
-            INSERT INTO projects (project_id, project_name, project_metadata)
-            VALUES ('{self.project_id}', '{self.project_name}', '{metadata}')
+            INSERT INTO projects (
+                project_id, project_name, project_is_active, project_metadata
+            ) VALUES (
+                '{self.project_id}', '{self.project_name}', {self.project_is_active}, '{metadata}'
+            )
             ON CONFLICT (project_id) DO UPDATE SET
                 project_name = EXCLUDED.project_name,
                 project_metadata = EXCLUDED.project_metadata;

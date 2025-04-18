@@ -17,12 +17,14 @@ class Site(BaseModel):
         site_id (str): Unique identifier for the site.
         site_name (str): Name of the site.
         project_id (str): Identifier for the project to which the site belongs.
+        site_is_active (bool): Indicates if the site is active.
         site_metadata (Dict[str, Any]): Metadata associated with the site.
     """
 
     site_id: str
     site_name: str
     project_id: str
+    site_is_active: bool = True
     site_metadata: Dict[str, Any]
 
     @staticmethod
@@ -35,6 +37,7 @@ class Site(BaseModel):
                 site_id TEXT NOT NULL,
                 project_id TEXT NOT NULL,
                 site_name TEXT NOT NULL,
+                site_is_active BOOLEAN DEFAULT TRUE NOT NULL,
                 site_metadata JSONB NOT NULL,
                 PRIMARY KEY (project_id, site_id),
                 FOREIGN KEY (project_id) REFERENCES projects(project_id)
@@ -66,9 +69,11 @@ class Site(BaseModel):
         """
         site_metadata = db.sanitize_json(self.site_metadata)
         sql_query = f"""
-            INSERT INTO sites (project_id, site_id, site_name, site_metadata)
-            VALUES ('{self.project_id}', '{self.site_id}', '{self.site_name}', '{site_metadata}')
-            ON CONFLICT (project_id, site_id) DO UPDATE
+            INSERT INTO sites (
+                project_id, site_id, site_name, site_is_active, site_metadata
+            ) VALUES (
+                '{self.project_id}', '{self.site_id}', '{self.site_name}', {self.site_is_active}, '{site_metadata}'
+            ) ON CONFLICT (project_id, site_id) DO UPDATE
             SET
                 site_name = EXCLUDED.site_name,
                 site_metadata = EXCLUDED.site_metadata;
