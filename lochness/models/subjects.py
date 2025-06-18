@@ -81,7 +81,9 @@ class Subject(BaseModel):
             ) VALUES (
                 '{self.subject_id}', '{self.site_id}', '{self.project_id}',
                 '{subject_metadata}'
-            );
+            ) ON CONFLICT (subject_id, site_id, project_id) DO UPDATE
+            SET subject_metadata = EXCLUDED.subject_metadata
+            WHERE subjects.subject_metadata IS DISTINCT FROM EXCLUDED.subject_metadata;
         """
 
         return sql_query

@@ -31,13 +31,13 @@ class DataSink(BaseModel):
         """
         sql_query = """
             CREATE TABLE data_sinks (
-            data_sink_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-            site_id TEXT NOT NULL,
-            project_id TEXT NOT NULL,
-            data_sink_name TEXT,
-            data_sink_metadata JSONB NOT NULL,
-            FOREIGN KEY (site_id, project_id)
-                REFERENCES sites (site_id, project_id)
+                data_sink_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                site_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                data_sink_name TEXT,
+                data_sink_metadata JSONB NOT NULL,
+                FOREIGN KEY (site_id, project_id)
+                    REFERENCES sites (site_id, project_id)
             );
         """
 

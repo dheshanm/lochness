@@ -29,7 +29,7 @@ class DataSource(BaseModel):
         sql_query = """
             CREATE TABLE data_sources (
                 data_source_name TEXT NOT NULL,
-                is_active BOOLEAN DEFAULT TRUE,
+                data_source_is_active BOOLEAN DEFAULT TRUE,
                 site_id TEXT NOT NULL,
                 project_id TEXT NOT NULL,
                 data_source_type TEXT REFERENCES supported_data_source_types(data_source_type),
