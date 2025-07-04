@@ -30,10 +30,12 @@ class KeyStore(BaseModel):
         sql_query = """
             CREATE TABLE IF NOT EXISTS key_store (
                 key_name TEXT NOT NULL,
+                project_id TEXT NOT NULL,
                 key_value BYTEA NOT NULL,
                 key_type TEXT NOT NULL,
                 key_metadata JSONB,
-                PRIMARY KEY (key_name)
+                PRIMARY KEY (key_name, project_id),
+                FOREIGN KEY (project_id) REFERENCES projects(project_id)
             );
         """
         return [enable_extension_query, sql_query]

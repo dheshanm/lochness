@@ -138,6 +138,7 @@ def execute_queries(
 
     try:
         credentials = get_db_credentials(config_file=config_file, db=db)
+        print(credentials)
         conn: psycopg2.extensions.connection = psycopg2.connect(**credentials)
         cur = conn.cursor()
 

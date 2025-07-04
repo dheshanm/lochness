@@ -65,8 +65,8 @@ def init_db(config_file: Path):
         SupportedDataSourceTypes.drop_db_table_query(),
         Subject.drop_db_table_query(),
         Site.drop_db_table_query(),
-        Project.drop_db_table_query(),
         KeyStore.drop_db_table_query(),
+        Project.drop_db_table_query(),
     ]
 
     create_queries_l: List[Union[str, List[str]]] = [
