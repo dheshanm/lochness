@@ -22,6 +22,7 @@ except ValueError:
     pass
 
 import logging
+import json
 from typing import Any, Dict, List, Optional, cast
 
 import pandas as pd
@@ -32,6 +33,7 @@ from lochness.helpers import logs, utils, db, config
 from lochness.models.keystore import KeyStore
 from lochness.models.subjects import Subject
 from lochness.sources.xnat.models.data_source import XnatDataSource
+
 
 MODULE_NAME = "lochness.sources.xnat.tasks.sync"
 
@@ -45,7 +47,6 @@ logargs: Dict[str, Any] = {
     "handlers": [RichHandler(rich_tracebacks=True)],
 }
 logging.basicConfig(**logargs)
-
 
 
 def insert_xnat_cred():
@@ -78,16 +79,139 @@ def get_xnat_cred():
     config_file = utils.get_config_file_path()
 
 
+def get_xnat_projects(xnat_data_source: XnatDataSource) -> List[str]:
+    """Get all project IDs from a XNAT data source.
 
-# def test():
-    # logs.configure_logging(
-        # config_file=config_file,
-        # module_name=MODULE_NAME,
-        # logger=logger
-    # )
+    Args:
+        xnat_data_source (XnatDataSource): The XNAT data source to get the projects from.
 
-    # if not config_file.exists():
-        # logger.error(f"Config file does not exist: {config_file}")
-        # sys.exit(1)
+    Returns:
+        List[str]: A list of project IDs.
+    """
+    url = f"{xnat_data_source.data_source_metadata.endpoint_url}/data/projects"
+    headers = {
+        "Authorization": f"Bearer {xnat_data_source.data_source_metadata.api_token}"
+    }
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    projects = response.json()["ResultSet"]["Result"]
+    return [project["ID"] for project in projects]
 
-    # logger.info("Finished syncing XNAT.")
+
+def get_xnat_subjects(xnat_data_source: XnatDataSource, project_id: str) -> List[str]:
+    """Get all subject IDs from a XNAT project.
+
+    Args:
+        xnat_data_source (XnatDataSource): The XNAT data source.
+        project_id (str): The project ID.
+
+    Returns:
+        List[str]: A list of subject IDs.
+    """
+    url = f"{xnat_data_source.data_source_metadata.endpoint_url}/data/projects/{project_id}/subjects"
+    headers = {
+        "Authorization": f"Bearer {xnat_data_source.data_source_metadata.api_token}"
+    }
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    subjects = response.json()["ResultSet"]["Result"]
+    return [subject["label"] for subject in subjects]
+
+
+def get_xnat_experiments(xnat_data_source: XnatDataSource, project_id: str, subject_id: str) -> List[str]:
+    """Get all experiment IDs from a XNAT subject.
+
+    Args:
+        xnat_data_source (XnatDataSource): The XNAT data source.
+        project_id (str): The project ID.
+        subject_id (str): The subject ID.
+
+    Returns:
+        List[str]: A list of experiment IDs.
+    """
+    url = f"{xnat_data_source.data_source_metadata.endpoint_url}/data/projects/{project_id}/subjects/{subject_id}/experiments"
+    headers = {
+        "Authorization": f"Bearer {xnat_data_source.data_source_metadata.api_token}"
+    }
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    experiments = response.json()["ResultSet"]["Result"]
+    return [experiment["label"] for experiment in experiments]
+
+
+def download_xnat_experiment(
+    xnat_data_source: XnatDataSource,
+    project_id: str,
+    subject_id: str,
+    experiment_id: str,
+    download_dir: Path,
+) -> Path:
+    """Download an experiment from XNAT.
+
+    Args:
+        xnat_data_source (XnatDataSource): The XNAT data source.
+        project_id (str): The project ID.
+        subject_id (str): The subject ID.
+        experiment_id (str): The experiment ID.
+        download_dir (Path): The directory to download the experiment to.
+
+    Returns:
+        Path: The path to the downloaded file.
+    """
+    url = (
+        f"{xnat_data_source.data_source_metadata.endpoint_url}/data/projects/{project_id}"
+        f"/subjects/{subject_id}/experiments/{experiment_id}/resources/files?format=zip"
+    )
+    headers = {
+        "Authorization": f"Bearer {xnat_data_source.data_source_metadata.api_token}"
+    }
+    response = requests.get(url, headers=headers, stream=True)
+    response.raise_for_status()
+
+    download_dir.mkdir(parents=True, exist_ok=True)
+    file_path = download_dir / f"{experiment_id}.zip"
+
+    with open(file_path, "wb") as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            f.write(chunk)
+
+    return file_path
+
+def schedule_xnat_download(
+    xnat_data_source: XnatDataSource,
+    project_id: str,
+    subject_id: str,
+    experiment_id: str,
+    download_dir: Path,
+) -> None:
+    """Schedule an XNAT experiment download as a job in the database.
+
+    Args:
+        xnat_data_source (XnatDataSource): The XNAT data source.
+        project_id (str): The project ID.
+        subject_id (str): The subject ID.
+        experiment_id (str): The experiment ID.
+        download_dir (Path): The directory to download the experiment to.
+    """
+    config_file = utils.get_config_file_path()
+    job_payload = {
+        "xnat_data_source": xnat_data_source.dict(),
+        "project_id": project_id,
+        "subject_id": subject_id,
+        "experiment_id": experiment_id,
+        "download_dir": str(download_dir),
+    }
+    job_payload_json = json.dumps(job_payload)
+
+    # Escape single quotes in the JSON string for SQL insertion
+    escaped_job_payload_json = job_payload_json.replace("'", "''")
+
+    insert_query = f"""INSERT INTO jobs (job_type, job_payload) VALUES ('xnat_download', '{escaped_job_payload_json}');"""
+
+    db.execute_queries(
+        config_file=config_file,
+        queries=[insert_query],
+        show_commands=False,
+    )
+    logger.info(f"Scheduled XNAT download for experiment {experiment_id} in project {project_id} subject {subject_id}")
+

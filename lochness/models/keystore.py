@@ -17,6 +17,7 @@ class KeyStore(BaseModel):
     key_name: str
     key_value: str
     key_type: str
+    project_id: str
     key_metadata: Dict[str, str] = {}
 
     @staticmethod
@@ -25,18 +26,18 @@ class KeyStore(BaseModel):
         Returns the SQL query to create the database table for keys.
         """
         enable_extension_query = """
-            CREATE EXTENSION IF NOT EXISTS pgcrypto;
+        CREATE EXTENSION IF NOT EXISTS pgcrypto;
         """
         sql_query = """
-            CREATE TABLE IF NOT EXISTS key_store (
-                key_name TEXT NOT NULL,
-                project_id TEXT NOT NULL,
-                key_value BYTEA NOT NULL,
-                key_type TEXT NOT NULL,
-                key_metadata JSONB,
-                PRIMARY KEY (key_name, project_id),
-                FOREIGN KEY (project_id) REFERENCES projects(project_id)
-            );
+        CREATE TABLE IF NOT EXISTS key_store (
+            key_name TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            key_value BYTEA NOT NULL,
+            key_type TEXT NOT NULL,
+            key_metadata JSONB,
+            PRIMARY KEY (key_name, project_id),
+            FOREIGN KEY (project_id) REFERENCES projects(project_id)
+        );
         """
         return [enable_extension_query, sql_query]
 
@@ -54,26 +55,29 @@ class KeyStore(BaseModel):
         """
         Converts the KeyStore instance to a SQL insert statement.
         """
+        project_id = db.sanitize_string(self.project_id)
         key_name = db.sanitize_string(self.key_name)
         key_value = db.sanitize_string(self.key_value)
         key_type = db.sanitize_string(self.key_type)
         key_metadata = db.sanitize_json(self.key_metadata)
-
+    
         sql = f"""
-            INSERT INTO key_store (
-                key_name,
-                key_value,
-                key_type,
-                key_metadata
-            ) VALUES (
-                '{key_name}',
-                pgp_sym_encrypt('{key_value}', '{encryption_passphrase}'),
-                '{key_type}',
-                '{key_metadata}'
-            ) ON CONFLICT (key_name)
-            DO UPDATE SET key_value = EXCLUDED.key_value,
-                          key_type = EXCLUDED.key_type,
-                          key_metadata = EXCLUDED.key_metadata;
+        INSERT INTO key_store (
+            key_name,
+            project_id,
+            key_value,
+            key_type,
+            key_metadata
+        ) VALUES (
+            '{key_name}',
+            '{project_id}',
+            pgp_sym_encrypt('{key_value}', '{encryption_passphrase}'),
+            '{key_type}',
+            '{key_metadata}'
+        ) ON CONFLICT (key_name, project_id)
+        DO UPDATE SET key_value = EXCLUDED.key_value,
+                      key_type = EXCLUDED.key_type,
+                      key_metadata = EXCLUDED.key_metadata;
         """
         return sql
 
