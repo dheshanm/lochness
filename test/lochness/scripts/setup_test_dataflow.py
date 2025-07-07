@@ -102,26 +102,22 @@ def setup_test_dataflow_data():
     # --- Insert SharePoint Data Source ---
     # Ensure the 'sharepoint' type is in supported_data_source_types table
     # (This is handled by a separate script or manual insertion)
-    ds_count = db.execute_sql(config_file, "SELECT COUNT(*) FROM data_sources WHERE data_source_name = '%s';" % test_sharepoint_ds_name).iloc[0, 0]
-    if ds_count == 0:
-        print(f"Inserting SharePoint data source '{test_sharepoint_ds_name}'...")
-        sharepoint_metadata = SharepointDataSourceMetadata(
-            keystore_name=test_keystore_name,
-            site_url=test_sharepoint_site_url,
-            form_id=test_sharepoint_form_id,
-        )
-        data_source = DataSource(
-            data_source_name=test_sharepoint_ds_name,
-            is_active=True,
-            site_id=test_site_id,
-            project_id=test_project_id,
-            data_source_type="sharepoint",
-            data_source_metadata=sharepoint_metadata.model_dump()
-        )
-        db.execute_queries(config_file, [data_source.to_sql_query()], show_commands=False)
-        print("SharePoint Data Source inserted.")
-    else:
-        print(f"Data source '{test_sharepoint_ds_name}' already exists, skipping insertion.")
+    print(f"Ensuring SharePoint data source '{test_sharepoint_ds_name}' exists...")
+    sharepoint_metadata = SharepointDataSourceMetadata(
+        keystore_name=test_keystore_name,
+        site_url=test_sharepoint_site_url,
+        form_id=test_sharepoint_form_id,
+    )
+    data_source = DataSource(
+        data_source_name=test_sharepoint_ds_name,
+        is_active=True,
+        site_id=test_site_id,
+        project_id=test_project_id,
+        data_source_type="sharepoint",
+        data_source_metadata=sharepoint_metadata.model_dump()
+    )
+    db.execute_queries(config_file, [data_source.to_sql_query()], show_commands=False)
+    print("SharePoint Data Source ensured.")
 
     print("Test dataflow setup complete.")
 
