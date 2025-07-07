@@ -177,6 +177,11 @@ def execute_queries(
         if command is not None:
             logger.error(f"[red]For query: {command}", extra={"markup": True})
         logger.error(e)
+
+        # Check for specific connection error related to hostname resolution
+        if isinstance(e, psycopg2.OperationalError) and "could not translate host name" in str(e):
+            logger.error("[bold yellow]HINT: This error often indicates a network issue, such as an incorrect hostname or a missing VPN connection. Please ensure your VPN is connected if required.", extra={"markup": True})
+
         if on_failure is not None:
             on_failure()
         else:
