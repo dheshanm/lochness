@@ -30,7 +30,7 @@ class DataSink(BaseModel):
         Returns the SQL query to create the database table for data sinks.
         """
         sql_query = """
-            CREATE TABLE data_sinks (
+            CREATE TABLE IF NOT EXISTS data_sinks (
                 data_sink_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 site_id TEXT NOT NULL,
                 project_id TEXT NOT NULL,
@@ -74,6 +74,7 @@ class DataSink(BaseModel):
         sql_query = f"""
             INSERT INTO data_sinks (data_sink_name, site_id, project_id, data_sink_metadata)
             VALUES ('{data_sink_name}', '{self.site_id}', '{self.project_id}', '{metadata_str}')
-            ON CONFLICT (site_id, project_id) DO NOTHING;
+            ON CONFLICT (data_sink_name, site_id, project_id)
+            DO UPDATE SET data_sink_metadata = EXCLUDED.data_sink_metadata;
         """
         return sql_query

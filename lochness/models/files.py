@@ -66,7 +66,7 @@ class File:
         Return the SQL query to create the 'files' table.
         """
         sql_query = """
-        CREATE TABLE files (
+        CREATE TABLE IF NOT EXISTS files (
             file_name TEXT NOT NULL,
             file_type TEXT NOT NULL,
             file_size_mb FLOAT NOT NULL,
@@ -111,7 +111,7 @@ class File:
             file_name = excluded.file_name,
             file_type = excluded.file_type,
             file_size_mb = excluded.file_size_mb,
-            file_m_time = excluded.m_time;
+            file_m_time = excluded.file_m_time;
         """
 
         sql_query = db.handle_null(sql_query)

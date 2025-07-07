@@ -21,7 +21,7 @@ class DataPush(BaseModel):
         push_metadata (Dict[str, Any]): Metadata associated with the data push.
     """
 
-    data_sink_name: str
+    data_sink_id: int
     file_path: str
     file_md5: str
     push_time_s: int
@@ -34,7 +34,7 @@ class DataPush(BaseModel):
         Returns the SQL query to create the database table for data pushes.
         """
         sql_query = """
-            CREATE TABLE data_push (
+            CREATE TABLE IF NOT EXISTS data_push (
                 data_push_id SERIAL PRIMARY KEY,
                 data_sink_id INTEGER REFERENCES data_sinks(data_sink_id),
                 file_path TEXT NOT NULL,
@@ -75,15 +75,14 @@ class DataPush(BaseModel):
         """
         Returns the SQL query to insert the data push into the database.
         """
-        data_sink_name = db.sanitize_string(self.data_sink_name)
         file_path = db.sanitize_string(self.file_path)
         file_md5 = db.sanitize_string(self.file_md5)
         push_time_s = self.push_time_s
         push_metadata = db.sanitize_json(self.push_metadata)
 
         sql_query = f"""
-            INSERT INTO data_push (data_sink_name, file_path, file_md5, push_time_s, push_metadata)
-            VALUES ('{data_sink_name}', '{file_path}', '{file_md5}', {push_time_s}, '{push_metadata}');
+            INSERT INTO data_push (data_sink_id, file_path, file_md5, push_time_s, push_metadata)
+            VALUES ({self.data_sink_id}, '{file_path}', '{file_md5}', {push_time_s}, '{push_metadata}');
         """
 
         return sql_query
