@@ -54,13 +54,14 @@ def get_sharepoint_cred(
         "encryption_passphrase"
     ]
 
-    keystore = KeyStore.get_by_name(
+    keystore = KeyStore.get_by_name_and_project(
         config_file,
         sharepoint_data_source.data_source_metadata.keystore_name,
+        sharepoint_data_source.project_id,
         encryption_passphrase,
     )
     if keystore:
-        return keystore.key_value
+        return json.loads(keystore.key_value)
     else:
         raise ValueError("SharePoint credentials not found in keystore")
 
