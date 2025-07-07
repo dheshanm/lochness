@@ -82,14 +82,29 @@ class KeyStore(BaseModel):
         return sql
 
     @staticmethod
-    def retrieve_key_query(key_name: str, encryption_passphrase: str) -> str:
+    def retrieve_key_query(key_name: str, project_id: str, encryption_passphrase: str) -> str:
         """
-        Returns the SQL query to retrieve a key from the database.
+        Returns the SQL query to retrieve a key from the database for a specific project.
         """
         key_name = db.sanitize_string(key_name)
+        project_id = db.sanitize_string(project_id)
         sql = f"""
             SELECT pgp_sym_decrypt(key_value, '{encryption_passphrase}') AS key_value
             FROM key_store
-            WHERE key_name = '{key_name}';
+            WHERE key_name = '{key_name}' AND project_id = '{project_id}';
         """
         return sql
+
+    @staticmethod
+    def get_by_name_and_project(
+        config_file: Path, key_name: str, project_id: str, encryption_passphrase: str
+    ) -> Optional["KeyStore"]:
+        """
+        Retrieves a KeyStore entry by its name and project ID.
+        """
+        query = KeyStore.retrieve_key_query(key_name, project_id, encryption_passphrase)
+        key_value_str = db.fetch_record(config_file, query)
+        if key_value_str:
+            # Assuming key_value is stored as a JSON string
+            return KeyStore(key_name=key_name, key_value=key_value_str, key_type="", project_id=project_id)
+        return None
