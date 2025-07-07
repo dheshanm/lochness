@@ -49,34 +49,47 @@ logargs: Dict[str, Any] = {
 logging.basicConfig(**logargs)
 
 
-def insert_xnat_cred():
+def insert_xnat_cred(key_name: str, key_value: str, project_id: str):
     config_file = utils.get_config_file_path()
 
-    # how should we handle encryption passphrase?
     encryption_passphrase = config.parse(config_file, 'general')[
             'encryption_passphrase']
 
-    # 2. Create a KeyStore instance
     my_key = KeyStore(
-        key_name="xnat",
-        key_value="secure_token_string_here",
+        key_name=key_name,
+        key_value=key_value,
         key_type="xnat",
+        project_id=project_id,
         key_metadata={
             "description": "Access token for XNAT",
-            "created_by": "kevin"}
+            "created_by": "lochness_script"}
     )
 
     insert_query = my_key.to_sql_query(
             encryption_passphrase=encryption_passphrase)
 
-    db.execute_queries(  # type: ignore
+    db.execute_queries(
         config_file=config_file,
         queries=[insert_query],
         show_commands=False,
     )
 
-def get_xnat_cred():
+def get_xnat_cred(xnat_data_source: XnatDataSource) -> Dict[str, str]:
     config_file = utils.get_config_file_path()
+    encryption_passphrase = config.parse(config_file, "general")[
+        "encryption_passphrase"
+    ]
+
+    keystore = KeyStore.get_by_name_and_project(
+        config_file,
+        xnat_data_source.data_source_metadata.keystore_name,
+        xnat_data_source.project_id,
+        encryption_passphrase,
+    )
+    if keystore:
+        return json.loads(keystore.key_value)
+    else:
+        raise ValueError("XNAT credentials not found in keystore")
 
 
 def get_xnat_projects(xnat_data_source: XnatDataSource) -> List[str]:
@@ -158,12 +171,13 @@ def download_xnat_experiment(
     Returns:
         Path: The path to the downloaded file.
     """
+    credentials = get_xnat_cred(xnat_data_source)
     url = (
-        f"{xnat_data_source.data_source_metadata.endpoint_url}/data/projects/{project_id}"
+        f"{credentials['endpoint_url']}/data/projects/{project_id}"
         f"/subjects/{subject_id}/experiments/{experiment_id}/resources/files?format=zip"
     )
     headers = {
-        "Authorization": f"Bearer {xnat_data_source.data_source_metadata.api_token}"
+        "Authorization": f"Bearer {credentials['api_token']}"
     }
     response = requests.get(url, headers=headers, stream=True)
     response.raise_for_status()
