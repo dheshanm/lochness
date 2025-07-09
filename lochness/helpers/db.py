@@ -138,7 +138,8 @@ def execute_queries(
 
     try:
         credentials = get_db_credentials(config_file=config_file, db=db)
-        logger.debug(f"Database credentials: {credentials}")
+        masked_credentials = {key: (value if key != "password" else "***") for key, value in credentials.items()}
+        logger.debug(f"Database credentials: {masked_credentials}")
         conn: psycopg2.extensions.connection = psycopg2.connect(**credentials)
         cur = conn.cursor()
 
