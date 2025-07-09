@@ -130,7 +130,8 @@ def test_schedule_sharepoint_download(mock_execute_queries, mock_get_config_file
     assert "https://test.com/test.txt" in queries[0]
 
 
-def test_insert_sharepoint_cred():
+@patch('psycopg2.connect')
+def test_insert_sharepoint_cred(mock_connect):
     config_file = utils.get_config_file_path()
 
     # how should we handle encryption passphrase?

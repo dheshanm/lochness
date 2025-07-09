@@ -7,18 +7,7 @@ from minio import Minio
 from minio.error import S3Error
 import json
 
-# Add project root to Python path
-file = Path(__file__).resolve()
-parent = file.parent
-root_dir = None
-for p in file.parents:
-    if p.name == 'lochness_v2':
-        root_dir = p
-if root_dir:
-    sys.path.append(str(root_dir))
-else:
-    # If running from project root, add current dir
-    sys.path.append(str(parent))
+
 
 from lochness.helpers import utils, db, config
 from lochness.models.data_sinks import DataSink

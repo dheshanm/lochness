@@ -134,7 +134,7 @@ class XnatDataSource(BaseModel):
                 XnatDataSource: A XnatDataSource object.
             """
             from lochness.models.keystore import KeyStore
-            query = KeyStore.retrieve_key_query(row["data_source_name"], encryption_passphrase)
+            query = KeyStore.retrieve_key_query(row["data_source_name"], row["project_id"], encryption_passphrase)
             api_token_df = db.execute_sql(config_file, query)
             api_token = api_token_df['key_value'][0]
 
