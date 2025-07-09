@@ -2,6 +2,7 @@
 Data Source Model
 """
 
+import json
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -35,8 +36,70 @@ class XnatDataSource(BaseModel):
     data_source_metadata: XnatDataSourceMetadata
 
     @staticmethod
+    def init_db_table_query() -> str:
+        """
+        Returns the SQL query to create the database table for data sources.
+        """
+        sql_query = """
+            CREATE TABLE IF NOT EXISTS data_sources (
+                data_source_name TEXT NOT NULL,
+                data_source_is_active BOOLEAN DEFAULT TRUE NOT NULL,
+                site_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                data_source_type TEXT NOT NULL,
+                data_source_metadata JSONB NOT NULL,
+                PRIMARY KEY (data_source_name),
+                FOREIGN KEY (site_id, project_id) REFERENCES sites(site_id, project_id)
+            );
+        """
+        return sql_query
+
+    @staticmethod
+    def drop_db_table_query() -> str:
+        """
+        Returns the SQL query to drop the database table for data sources.
+        """
+        sql_query = """
+            DROP TABLE IF EXISTS data_sources;
+        """
+        return sql_query
+
+    def to_sql_query(self) -> str:
+        """
+        Returns the SQL query to insert the data source into the database.
+        """
+        data_source_metadata = db.sanitize_json(json.loads(self.data_source_metadata.model_dump_json()))
+        sql_query = f"""
+            INSERT INTO data_sources (
+                data_source_name,
+                data_source_is_active,
+                site_id,
+                project_id,
+                data_source_type,
+                data_source_metadata
+            ) VALUES (
+                '{self.data_source_name}',
+                {self.is_active},
+                '{self.site_id}',
+                '{self.project_id}',
+                '{self.data_source_type}',
+                '{data_source_metadata}'
+            )
+            ON CONFLICT (data_source_name) DO UPDATE SET
+                data_source_is_active = EXCLUDED.data_source_is_active,
+                site_id = EXCLUDED.site_id,
+                project_id = EXCLUDED.project_id,
+                data_source_type = EXCLUDED.data_source_type,
+                data_source_metadata = EXCLUDED.data_source_metadata;
+        """
+        return sql_query
+
+
+
+    @staticmethod
     def get_all_xnat_data_sources(
         config_file: Path,
+        encryption_passphrase: str,
         active_only: bool = True,
     ) -> List["XnatDataSource"]:
         """
@@ -58,6 +121,7 @@ class XnatDataSource(BaseModel):
             config_file=config_file,
             query=sql_query,
         )
+        print(df)
 
         def convert_to_xnat_data_source(row: Dict[str, Any]) -> "XnatDataSource":
             """
@@ -69,6 +133,11 @@ class XnatDataSource(BaseModel):
             Returns:
                 XnatDataSource: A XnatDataSource object.
             """
+            from lochness.models.keystore import KeyStore
+            query = KeyStore.retrieve_key_query(row["data_source_name"], encryption_passphrase)
+            api_token_df = db.execute_sql(config_file, query)
+            api_token = api_token_df['key_value'][0]
+
             xnat_data_source = XnatDataSource(
                 data_source_name=row["data_source_name"],
                 is_active=row["data_source_is_active"],
@@ -76,7 +145,7 @@ class XnatDataSource(BaseModel):
                 project_id=row["project_id"],
                 data_source_type=row["data_source_type"],
                 data_source_metadata=XnatDataSourceMetadata(
-                    api_token=row["data_source_metadata"]["api_token"],
+                    api_token=api_token,
                     endpoint_url=row["data_source_metadata"]["endpoint_url"],
                     subject_id_variable=row["data_source_metadata"][
                         "subject_id_variable"

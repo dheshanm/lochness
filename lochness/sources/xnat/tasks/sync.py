@@ -26,6 +26,7 @@ import json
 from typing import Any, Dict, List, Optional, cast
 
 import pandas as pd
+import xnat
 import requests
 from rich.logging import RichHandler
 
@@ -101,14 +102,11 @@ def get_xnat_projects(xnat_data_source: XnatDataSource) -> List[str]:
     Returns:
         List[str]: A list of project IDs.
     """
-    url = f"{xnat_data_source.data_source_metadata.endpoint_url}/data/projects"
-    headers = {
-        "Authorization": f"Bearer {xnat_data_source.data_source_metadata.api_token}"
-    }
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    projects = response.json()["ResultSet"]["Result"]
-    return [project["ID"] for project in projects]
+    with xnat.connect(xnat_data_source.data_source_metadata.endpoint_url, 
+                       user=xnat_data_source.data_source_metadata.api_token, 
+                       password=xnat_data_source.data_source_metadata.api_token) as connection:
+        projects = connection.projects.keys()
+    return list(projects)
 
 
 def get_xnat_subjects(xnat_data_source: XnatDataSource, project_id: str) -> List[str]:
@@ -121,14 +119,11 @@ def get_xnat_subjects(xnat_data_source: XnatDataSource, project_id: str) -> List
     Returns:
         List[str]: A list of subject IDs.
     """
-    url = f"{xnat_data_source.data_source_metadata.endpoint_url}/data/projects/{project_id}/subjects"
-    headers = {
-        "Authorization": f"Bearer {xnat_data_source.data_source_metadata.api_token}"
-    }
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    subjects = response.json()["ResultSet"]["Result"]
-    return [subject["label"] for subject in subjects]
+    with xnat.connect(xnat_data_source.data_source_metadata.endpoint_url, 
+                       user=xnat_data_source.data_source_metadata.api_token, 
+                       password=xnat_data_source.data_source_metadata.api_token) as connection:
+        subjects = connection.projects[project_id].subjects.keys()
+    return list(subjects)
 
 
 def get_xnat_experiments(xnat_data_source: XnatDataSource, project_id: str, subject_id: str) -> List[str]:
@@ -142,14 +137,11 @@ def get_xnat_experiments(xnat_data_source: XnatDataSource, project_id: str, subj
     Returns:
         List[str]: A list of experiment IDs.
     """
-    url = f"{xnat_data_source.data_source_metadata.endpoint_url}/data/projects/{project_id}/subjects/{subject_id}/experiments"
-    headers = {
-        "Authorization": f"Bearer {xnat_data_source.data_source_metadata.api_token}"
-    }
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    experiments = response.json()["ResultSet"]["Result"]
-    return [experiment["label"] for experiment in experiments]
+    with xnat.connect(xnat_data_source.data_source_metadata.endpoint_url, 
+                       user=xnat_data_source.data_source_metadata.api_token, 
+                       password=xnat_data_source.data_source_metadata.api_token) as connection:
+        experiments = connection.projects[project_id].subjects[subject_id].experiments.keys()
+    return list(experiments)
 
 
 def download_xnat_experiment(
@@ -171,25 +163,15 @@ def download_xnat_experiment(
     Returns:
         Path: The path to the downloaded file.
     """
-    credentials = get_xnat_cred(xnat_data_source)
-    url = (
-        f"{credentials['endpoint_url']}/data/projects/{project_id}"
-        f"/subjects/{subject_id}/experiments/{experiment_id}/resources/files?format=zip"
-    )
-    headers = {
-        "Authorization": f"Bearer {credentials['api_token']}"
-    }
-    response = requests.get(url, headers=headers, stream=True)
-    response.raise_for_status()
+    with xnat.connect(xnat_data_source.data_source_metadata.endpoint_url, 
+                       user=xnat_data_source.data_source_metadata.api_token, 
+                       password=xnat_data_source.data_source_metadata.api_token) as connection:
+        experiment = connection.projects[project_id].subjects[subject_id].experiments[experiment_id]
+        # xnatpy's download method downloads to a specified directory
+        # It usually returns the path to the downloaded file/directory
+        downloaded_path = experiment.download(download_dir)
+    return Path(downloaded_path)
 
-    download_dir.mkdir(parents=True, exist_ok=True)
-    file_path = download_dir / f"{experiment_id}.zip"
-
-    with open(file_path, "wb") as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
-
-    return file_path
 
 def schedule_xnat_download(
     xnat_data_source: XnatDataSource,
@@ -228,4 +210,49 @@ def schedule_xnat_download(
         show_commands=False,
     )
     logger.info(f"Scheduled XNAT download for experiment {experiment_id} in project {project_id} subject {subject_id}")
+
+def check_xnat_connection(xnat_data_source: XnatDataSource) -> bool:
+    """Check connectivity and authentication to the XNAT server.
+
+    Args:
+        xnat_data_source (XnatDataSource): The XNAT data source.
+
+    Returns:
+        bool: True if connection is successful, False otherwise.
+    """
+    try:
+        with xnat.connect(xnat_data_source.data_source_metadata.endpoint_url, 
+                           user=xnat_data_source.data_source_metadata.api_token, 
+                           password=xnat_data_source.data_source_metadata.api_token) as connection:
+            # Attempt to list projects to verify connection
+            connection.projects.keys()
+        logger.info("Successfully connected to XNAT server.")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to connect to XNAT server: {e}")
+        return False
+
+def get_xnat_project_metadata(xnat_data_source: XnatDataSource, project_id: str) -> Dict[str, Any]:
+    """Get detailed metadata for a specific XNAT project.
+
+    Args:
+        xnat_data_source (XnatDataSource): The XNAT data source.
+        project_id (str): The project ID.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing the project metadata.
+    """
+    with xnat.connect(xnat_data_source.data_source_metadata.endpoint_url, 
+                       user=xnat_data_source.data_source_metadata.api_token, 
+                       password=xnat_data_source.data_source_metadata.api_token) as connection:
+        project = connection.projects[project_id]
+        # xnatpy project objects have attributes like name, description, etc.
+        # Convert to a dictionary for consistency with previous implementation
+        metadata = {
+            "ID": project.id,
+            "name": project.name,
+            "description": project.description,
+            # Add other relevant metadata fields as needed
+        }
+    return metadata
 
