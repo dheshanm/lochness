@@ -117,7 +117,7 @@ def schedule_sharepoint_download(
     """Schedule a SharePoint file download as a job in the database."""
     config_file = utils.get_config_file_path()
     job_payload = {
-        "sharepoint_data_source": sharepoint_data_source.model_dump(),
+        "sharepoint_data_source": sharepoint_data_source.dict(),
         "file_url": file_url,
         "download_dir": str(download_dir),
     }
