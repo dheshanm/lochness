@@ -7,7 +7,7 @@ file = Path(__file__).resolve()
 parent = file.parent
 root_dir = None
 for p in file.parents:
-    if p.name == 'lochness_v2':
+    if p.name == 'lochness-v2':
         root_dir = p
 if root_dir:
     sys.path.append(str(root_dir))
