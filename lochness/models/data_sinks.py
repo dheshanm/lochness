@@ -4,7 +4,8 @@ pushed or stored after aquisition. This can include Object Stores,
 File Systems, or any other storage solutions.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, List
+from pathlib import Path
 from pydantic import BaseModel
 
 from lochness.helpers import db
@@ -78,3 +79,32 @@ class DataSink(BaseModel):
             DO UPDATE SET data_sink_metadata = EXCLUDED.data_sink_metadata;
         """
         return sql_query
+
+    @staticmethod
+    def get_all_data_sinks(config_file: Path, active_only: bool = False) -> List["DataSink"]:
+        """
+        Retrieves all data sinks from the database.
+
+        Args:
+            config_file (Path): Path to the configuration file.
+            active_only (bool): If True, only return active data sinks (based on metadata).
+
+        Returns:
+            List[DataSink]: A list of DataSink objects.
+        """
+        query = "SELECT data_sink_name, site_id, project_id, data_sink_metadata FROM data_sinks;"
+        data_sinks_df = db.execute_sql(config_file, query)
+
+        data_sinks: List[DataSink] = []
+        for _, row in data_sinks_df.iterrows():
+            data_sink = DataSink(
+                data_sink_name=row["data_sink_name"],
+                site_id=row["site_id"],
+                project_id=row["project_id"],
+                data_sink_metadata=row["data_sink_metadata"],
+            )
+            # If active_only is True, check for 'active': True in metadata
+            if active_only and not data_sink.data_sink_metadata.get("active", False):
+                continue
+            data_sinks.append(data_sink)
+        return data_sinks
