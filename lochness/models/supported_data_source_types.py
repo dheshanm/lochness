@@ -64,9 +64,10 @@ SUPPORTED_DATA_SOURCE_TYPES: List[SupportedDataSourceTypes] = [
     SupportedDataSourceTypes(
         data_source_type="redcap",
         data_source_metadata_dict={
-            "api_url": "URL to make API calls to",
-            "api_token": "API token to use",
-            "project_id": "REDCap project ID",
+            "keystore_name": "Name of the keystore entry containing the API token",
+            "endpoint_url": "REDCap API endpoint URL",
+            "subject_id_variable": "Name of the variable containing subject IDs",
+            "optional_variables_dictionary": "List of additional variables to fetch",
         },
     ),
     SupportedDataSourceTypes(

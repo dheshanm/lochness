@@ -15,7 +15,7 @@ class RedcapDataSourceMetadata(BaseModel):
     Metadata for a REDCap data source.
     """
 
-    api_token: str
+    keystore_name: str
     endpoint_url: str
     subject_id_variable: str
     optional_variables_dictionary: List[Dict[str, str]]
@@ -37,6 +37,7 @@ class RedcapDataSource(BaseModel):
     @staticmethod
     def get_all_redcap_data_sources(
         config_file: Path,
+        encryption_passphrase: str,
         active_only: bool = True,
     ) -> List["RedcapDataSource"]:
         """
@@ -69,6 +70,15 @@ class RedcapDataSource(BaseModel):
             Returns:
                 RedcapDataSource: A RedcapDataSource object.
             """
+            from lochness.models.keystore import KeyStore
+            keystore_name = row["data_source_metadata"]["keystore_name"]
+            query = KeyStore.retrieve_key_query(keystore_name, row["project_id"], encryption_passphrase)
+            api_token_df = db.execute_sql(config_file, query)
+            api_token = api_token_df['key_value'][0]
+
+            # Handle missing optional_variables_dictionary with default empty list
+            optional_variables = row["data_source_metadata"].get("optional_variables_dictionary", [])
+
             redcap_data_source = RedcapDataSource(
                 data_source_name=row["data_source_name"],
                 is_active=row["data_source_is_active"],
@@ -76,14 +86,12 @@ class RedcapDataSource(BaseModel):
                 project_id=row["project_id"],
                 data_source_type=row["data_source_type"],
                 data_source_metadata=RedcapDataSourceMetadata(
-                    api_token=row["data_source_metadata"]["api_token"],
+                    keystore_name=row["data_source_metadata"]["keystore_name"],
                     endpoint_url=row["data_source_metadata"]["endpoint_url"],
                     subject_id_variable=row["data_source_metadata"][
                         "subject_id_variable"
                     ],
-                    optional_variables_dictionary=row["data_source_metadata"][
-                        "optional_variables_dictionary"
-                    ],
+                    optional_variables_dictionary=optional_variables,
                 ),
             )
             return redcap_data_source
