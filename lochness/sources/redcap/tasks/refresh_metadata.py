@@ -350,7 +350,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # config_file = Path(__file__).resolve().parents[3] / "sample.config.ini"
-    config_file = utils.get_config_file_path()
+    config_file = Path(__file__).resolve().parents[4] / "sample.config.ini"
     logs.configure_logging(
         config_file=config_file, module_name=MODULE_NAME, logger=logger
     )
