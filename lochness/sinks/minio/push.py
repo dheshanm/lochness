@@ -56,6 +56,14 @@ def push_file(
     secret_key_df = db.execute_sql(config_file, query_secret_key)
     secret_key = secret_key_df['key_value'][0] if not secret_key_df.empty else None
 
+    # Add logging to confirm types and values
+    print(f"DEBUG: access_key value: {access_key}")
+    print(f"DEBUG: access_key type: {type(access_key)}")
+    print(f"DEBUG: secret_key value: {secret_key}")
+    print(f"DEBUG: secret_key type: {type(secret_key)}")
+
+    # Do not parse as JSON, use as-is
+
     if not all([access_key, secret_key]):
         Logs(
             log_level="ERROR",
@@ -94,7 +102,7 @@ def push_file(
         # Determine object name (path within the bucket)
         # For simplicity, let's use a path similar to the local storage structure
         # e.g., <project_id>/<site_id>/<data_source_name>/<subject_id>/<filename>
-        object_name = f"{data_sink.project_id}/{data_sink.site_id}/{push_metadata.get("data_source_name", "unknown")}/{push_metadata.get("subject_id", "unknown")}/{file_path.name}"
+        object_name = f"{data_sink.project_id}/{data_sink.site_id}/{push_metadata.get('data_source_name', 'unknown')}/{push_metadata.get('subject_id', 'unknown')}/{file_path.name}"
 
         client.fput_object(
             bucket_name,

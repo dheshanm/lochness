@@ -77,6 +77,7 @@ def get_minio_cred(
         project_id,
         encryption_passphrase,
     )
+    print(keystore)
     if keystore:
         return json.loads(keystore.key_value)
     else:

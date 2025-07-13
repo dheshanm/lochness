@@ -270,6 +270,8 @@ def fetch_record(
         print("DEBUG (fetch_record): No rows returned.")
         return None
 
+    print(query)
+    print(df)
     value = df.iloc[0, 0]
     print(f"DEBUG (fetch_record): Value from DataFrame: {value}")
     print(f"DEBUG (fetch_record): Type of value: {type(value)}")

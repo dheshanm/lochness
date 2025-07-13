@@ -103,8 +103,11 @@ class KeyStore(BaseModel):
         Retrieves a KeyStore entry by its name and project ID.
         """
         query = KeyStore.retrieve_key_query(key_name, project_id, encryption_passphrase)
+        print(query)
         key_value_raw = db.fetch_record(config_file, query)
+        print(key_value_raw)
+        import sys
+        sys.exit()
         if key_value_raw:
-            key_value_str = str(key_value_raw) # Ensure it's a string
-            return KeyStore(key_name=key_name, key_value=key_value_str, key_type="", project_id=project_id)
+            return KeyStore(key_name=key_name, key_value=key_value_raw, key_type="", project_id=project_id)
         return None

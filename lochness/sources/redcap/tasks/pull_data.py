@@ -336,7 +336,9 @@ def push_to_minio_sink(
         from lochness.sources.minio.tasks.credentials import get_minio_cred
 
         # Get MinIO credentials from keystore
+        logger.info(f"Getting MinIO credentials for keystore: {keystore_name}, project: {project_id}")
         minio_creds = get_minio_cred(keystore_name, project_id)
+        logger.info(f"Retrieved MinIO credentials: {minio_creds}")
         access_key = minio_creds["access_key"]
         secret_key = minio_creds["secret_key"]
 
@@ -580,3 +582,35 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
                             site_id=subject.site_id,
                             config_file=config_file,
                         )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Pull REDCap data for all or specific project/site.")
+    parser.add_argument('--project_id', type=str, default=None, help='Project ID to pull data for (optional)')
+    parser.add_argument('--site_id', type=str, default=None, help='Site ID to pull data for (optional)')
+    parser.add_argument('--push_to_sink', action='store_true', help='Push pulled files to data sink')
+    args = parser.parse_args()
+
+    config_file = Path(__file__).resolve().parents[4] / "sample.config.ini"
+    print(f"Resolved config_file path: {config_file}") # Debugging line
+    logs.configure_logging(
+        config_file=config_file, module_name=MODULE_NAME, logger=logger
+    )
+
+    logger.info("Starting REDCap data pull...")
+
+    if not config_file.exists():
+        logger.error(f"Config file does not exist: {config_file}")
+        Logs(
+            log_level="FATAL",
+            log_message={
+                "event": "redcap_data_pull_config_missing",
+                "message": f"Config file does not exist: {config_file}",
+                "config_file_path": str(config_file),
+            },
+        ).insert(config_file)
+        sys.exit(1)
+
+    pull_all_data(config_file=config_file, project_id=args.project_id, site_id=args.site_id, push_to_sink=args.push_to_sink)
+
+    logger.info("Finished REDCap data pull.")
