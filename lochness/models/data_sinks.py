@@ -38,7 +38,8 @@ class DataSink(BaseModel):
                 data_sink_name TEXT,
                 data_sink_metadata JSONB NOT NULL,
                 FOREIGN KEY (site_id, project_id)
-                    REFERENCES sites (site_id, project_id)
+                    REFERENCES sites (site_id, project_id),
+                UNIQUE (data_sink_name, site_id, project_id)
             );
         """
 

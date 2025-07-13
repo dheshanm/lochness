@@ -28,6 +28,7 @@ from rich.logging import RichHandler
 
 from lochness.helpers import utils, logs
 from lochness import models
+from lochness.models.jobs import Job
 
 MODULE_NAME = "lochness.scripts.init_db"
 
@@ -57,7 +58,14 @@ def initialize_db(config_file: Path):
     logger.info("Initializing database...")
     logger.warning("This will delete all existing data in the database!")
 
+    # Add jobs table to the initialization
+    from lochness import models
     models.init_db(config_file=config_file)
+    # Create jobs table if not exists
+    import psycopg2
+    from lochness.helpers import db
+    queries = [Job.init_db_table_query()]
+    db.execute_queries(config_file=config_file, queries=queries, show_commands=False)
 
     complete_log = models.Logs(
         log_message={

@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """
-Pulls data from REDCap for active data sources and subjects.
+Pulls data from XNAT for active data sources and subjects.
 
 This script is intended to be run as a cron job.
-It will pull data for all active REDCap data sources and their associated subjects.
+It will pull data for all active XNAT data sources and their associated subjects.
 """
 
 import sys
@@ -12,9 +12,8 @@ import argparse
 import logging
 from typing import Any, Dict, List, Optional, cast
 from datetime import datetime
-from datetime import datetime
 
-import pandas as pd
+import xnat
 import requests
 from rich.logging import RichHandler
 
@@ -26,9 +25,9 @@ from lochness.models.files import File
 from lochness.models.data_pulls import DataPull
 from lochness.models.data_push import DataPush
 from lochness.models.data_sinks import DataSink
-from lochness.sources.redcap.models.data_source import RedcapDataSource
+from lochness.sources.xnat.models.data_source import XnatDataSource
 
-MODULE_NAME = "lochness.sources.redcap.tasks.pull_data"
+MODULE_NAME = "lochness.sources.xnat.tasks.pull_data"
 
 console = utils.get_console()
 
@@ -41,62 +40,107 @@ logargs: Dict[str, Any] = {
 logging.basicConfig(**logargs)
 
 
+def get_xnat_cred(xnat_data_source: XnatDataSource) -> Dict[str, str]:
+    """Get XNAT credentials from the keystore."""
+    config_file = utils.get_config_file_path()
+    encryption_passphrase = config.parse(config_file, "general")[
+        "encryption_passphrase"
+    ]
+
+    keystore = KeyStore.get_by_name_and_project(
+        config_file,
+        xnat_data_source.data_source_metadata.keystore_name,
+        xnat_data_source.project_id,
+        encryption_passphrase,
+    )
+    if keystore:
+        import json
+        return json.loads(keystore.key_value)
+    else:
+        raise ValueError("XNAT credentials not found in keystore")
+
+
 def fetch_subject_data(
-    redcap_data_source: RedcapDataSource,
+    xnat_data_source: XnatDataSource,
     subject_id: str,
     encryption_passphrase: str,
     timeout_s: int = 60,
 ) -> Optional[bytes]:
     """
-    Fetches data for a single subject from REDCap.
+    Fetches data for a single subject from XNAT.
 
     Args:
-        redcap_data_source (RedcapDataSource): The REDCap data source.
+        xnat_data_source (XnatDataSource): The XNAT data source.
         subject_id (str): The subject ID to fetch data for.
         encryption_passphrase (str): The encryption passphrase for keystore access.
         timeout_s (int): Timeout for the API request.
 
     Returns:
-        Optional[bytes]: The raw data from REDCap, or None if fetching fails.
+        Optional[bytes]: The raw data from XNAT, or None if fetching fails.
     """
-    project_id = redcap_data_source.project_id
-    site_id = redcap_data_source.site_id
-    data_source_name = redcap_data_source.data_source_name
-
-    redcap_endpoint_url = redcap_data_source.data_source_metadata.endpoint_url
+    project_id = xnat_data_source.project_id
+    site_id = xnat_data_source.site_id
+    data_source_name = xnat_data_source.data_source_name
 
     identifier = f"{project_id}::{site_id}::{data_source_name}::{subject_id}"
     logger.info(f"Fetching data for {identifier}...")
 
-    config_file = utils.get_config_file_path()
-    query = KeyStore.retrieve_key_query(
-        redcap_data_source.data_source_metadata.keystore_name,
-        project_id,
-        encryption_passphrase,
-    )
-    api_token_df = db.execute_sql(config_file, query)
-    api_token = api_token_df['key_value'][0]
-
-    data = {
-        "token": api_token,
-        "content": "record",
-        "action": "export",
-        "format": "json",  # Changed from 'csv' to 'json'
-        "type": "flat",
-        "returnFormat": "json",
-        "records[0]": subject_id, # Export data for this specific subject
-    }
-
     try:
-        r = requests.post(redcap_endpoint_url, data=data, timeout=timeout_s)
-        r.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
-        return r.content
-    except requests.exceptions.RequestException as e:
+        # Get XNAT credentials
+        credentials = get_xnat_cred(xnat_data_source)
+        endpoint_url = xnat_data_source.data_source_metadata.endpoint_url
+        api_token = credentials.get("api_token")
+
+        # Connect to XNAT
+        with xnat.connect(endpoint_url, user=api_token, password=api_token) as connection:
+            # Get subject data
+            subject = connection.projects[project_id].subjects[subject_id]
+            
+            # Get all experiments for this subject
+            experiments = list(subject.experiments.keys())
+            
+            if not experiments:
+                logger.warning(f"No experiments found for subject {subject_id}")
+                return None
+
+            # For now, get the first experiment (you might want to iterate through all)
+            experiment_id = experiments[0]
+            experiment = subject.experiments[experiment_id]
+            
+            # Download the experiment as a ZIP file
+            # This will download all scans and resources for the experiment
+            logger.info(f"Downloading experiment {experiment_id} for subject {subject_id}")
+            
+            # Create a temporary directory for the download
+            import tempfile
+            import zipfile
+            import io
+            
+            with tempfile.TemporaryDirectory() as temp_dir:
+                # Download the experiment to the temp directory
+                downloaded_path = experiment.download(temp_dir)
+                downloaded_path = Path(downloaded_path)
+                
+                # Create a ZIP file in memory
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                    # Add all files from the downloaded directory to the ZIP
+                    for file_path in downloaded_path.rglob('*'):
+                        if file_path.is_file():
+                            # Add file to ZIP with relative path
+                            arcname = file_path.relative_to(downloaded_path)
+                            zip_file.write(file_path, arcname)
+                
+                # Return the ZIP data
+                zip_buffer.seek(0)
+                return zip_buffer.getvalue()
+
+    except Exception as e:
         logger.error(f"Failed to fetch data for {identifier}: {e}")
         Logs(
             log_level="ERROR",
             log_message={
-                "event": "redcap_data_pull_fetch_failed",
+                "event": "xnat_data_pull_fetch_failed",
                 "message": f"Failed to fetch data for {identifier}.",
                 "project_id": project_id,
                 "site_id": site_id,
@@ -132,13 +176,13 @@ def save_subject_data(
     """
     try:
         # Define the path where the data will be stored
-        # Example: <lochness_root>/data/<project_id>/<site_id>/<data_source_name>/<subject_id>/<timestamp>.csv
+        # Example: <lochness_root>/data/<project_id>/<site_id>/<data_source_name>/<subject_id>/<timestamp>.json
         lochness_root = config.parse(config_file, 'general')['lochness_root']
         output_dir = Path(lochness_root) / "data" / project_id / site_id / data_source_name / subject_id
         output_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = utils.get_timestamp()
-        file_name = f"{timestamp}.json" # Changed from CSV to JSON format
+        file_name = f"{timestamp}.zip"  # ZIP format for XNAT data
         file_path = output_dir / file_name
 
         with open(file_path, "wb") as f:
@@ -155,7 +199,7 @@ def save_subject_data(
         Logs(
             log_level="INFO",
             log_message={
-                "event": "redcap_data_pull_save_success",
+                "event": "xnat_data_pull_save_success",
                 "message": f"Successfully saved data for {subject_id} to {file_path}.",
                 "project_id": project_id,
                 "site_id": site_id,
@@ -172,7 +216,7 @@ def save_subject_data(
         Logs(
             log_level="ERROR",
             log_message={
-                "event": "redcap_data_pull_save_failed",
+                "event": "xnat_data_pull_save_failed",
                 "message": f"Failed to save data for {subject_id}.",
                 "project_id": project_id,
                 "site_id": site_id,
@@ -266,7 +310,7 @@ def push_to_data_sink(
             Logs(
                 log_level="INFO",
                 log_message={
-                    "event": "redcap_data_push_success",
+                    "event": "xnat_data_push_success",
                     "message": f"Successfully pushed {file_path} to data sink {data_sink_name}.",
                     "project_id": project_id,
                     "site_id": site_id,
@@ -283,7 +327,7 @@ def push_to_data_sink(
         Logs(
             log_level="ERROR",
             log_message={
-                "event": "redcap_data_push_failed",
+                "event": "xnat_data_push_failed",
                 "message": f"Failed to push {file_path} to data sink.",
                 "project_id": project_id,
                 "site_id": site_id,
@@ -371,7 +415,7 @@ def push_to_minio_sink(
             bucket_name,
             object_name,
             str(file_path),
-            content_type="application/json",
+            content_type="application/zip",
         )
         
         end_time = datetime.now()
@@ -400,7 +444,7 @@ def push_to_minio_sink(
         Logs(
             log_level="INFO",
             log_message={
-                "event": "redcap_data_push_success",
+                "event": "xnat_data_push_success",
                 "message": f"Successfully pushed {file_path} to MinIO data sink {data_sink_name}.",
                 "project_id": project_id,
                 "site_id": site_id,
@@ -419,7 +463,7 @@ def push_to_minio_sink(
         Logs(
             log_level="ERROR",
             log_message={
-                "event": "redcap_data_push_minio_error",
+                "event": "xnat_data_push_minio_error",
                 "message": f"MinIO S3 Error while pushing {file_path}.",
                 "project_id": project_id,
                 "site_id": site_id,
@@ -433,7 +477,7 @@ def push_to_minio_sink(
         Logs(
             log_level="ERROR",
             log_message={
-                "event": "redcap_data_push_failed",
+                "event": "xnat_data_push_failed",
                 "message": f"Failed to push {file_path} to MinIO data sink.",
                 "project_id": project_id,
                 "site_id": site_id,
@@ -446,13 +490,13 @@ def push_to_minio_sink(
 
 def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None, push_to_sink: bool = False):
     """
-    Main function to pull data for all active REDCap data sources and subjects.
+    Main function to pull data for all active XNAT data sources and subjects.
     """
     Logs(
         log_level="INFO",
         log_message={
-            "event": "redcap_data_pull_start",
-            "message": "Starting REDCap data pull process.",
+            "event": "xnat_data_pull_start",
+            "message": "Starting XNAT data pull process.",
             "project_id": project_id,
             "site_id": site_id,
             "push_to_sink": push_to_sink,
@@ -461,83 +505,81 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
 
     encryption_passphrase = config.parse(config_file, 'general')['encryption_passphrase']
 
-    active_redcap_data_sources = RedcapDataSource.get_all_redcap_data_sources(
+    active_xnat_data_sources = XnatDataSource.get_all_xnat_data_sources(
         config_file=config_file,
         encryption_passphrase=encryption_passphrase,
         active_only=True
     )
 
     if project_id:
-        active_redcap_data_sources = [ds for ds in active_redcap_data_sources if ds.project_id == project_id]
+        active_xnat_data_sources = [ds for ds in active_xnat_data_sources if ds.project_id == project_id]
     if site_id:
-        active_redcap_data_sources = [ds for ds in active_redcap_data_sources if ds.site_id == site_id]
+        active_xnat_data_sources = [ds for ds in active_xnat_data_sources if ds.site_id == site_id]
 
-    if not active_redcap_data_sources:
-        logger.info("No active REDCap data sources found for data pull.")
+    if not active_xnat_data_sources:
+        logger.info("No active XNAT data sources found for data pull.")
         Logs(
             log_level="INFO",
             log_message={
-                "event": "redcap_data_pull_no_active_sources",
-                "message": "No active REDCap data sources found for data pull.",
+                "event": "xnat_data_pull_no_active_sources",
+                "message": "No active XNAT data sources found for data pull.",
                 "project_id": project_id,
                 "site_id": site_id,
             },
         ).insert(config_file)
         return
 
-    logger.info(f"Found {len(active_redcap_data_sources)} active REDCap data sources for data pull.")
+    logger.info(f"Found {len(active_xnat_data_sources)} active XNAT data sources for data pull.")
     Logs(
         log_level="INFO",
         log_message={
-            "event": "redcap_data_pull_active_sources_found",
-            "message": f"Found {len(active_redcap_data_sources)} active REDCap data sources for data pull.",
-            "count": len(active_redcap_data_sources),
+            "event": "xnat_data_pull_active_sources_found",
+            "message": f"Found {len(active_xnat_data_sources)} active XNAT data sources for data pull.",
+            "count": len(active_xnat_data_sources),
             "project_id": project_id,
             "site_id": site_id,
         },
     ).insert(config_file)
 
-    for redcap_data_source in active_redcap_data_sources:
+    for xnat_data_source in active_xnat_data_sources:
         # Get subjects for this data source
-        # For simplicity, let's assume we pull data for all subjects associated with this project/site
-        # In a real scenario, you might filter for new subjects or subjects with updated metadata
         subjects_in_db = Subject.get_subjects_for_project_site(
-            project_id=redcap_data_source.project_id,
-            site_id=redcap_data_source.site_id,
+            project_id=xnat_data_source.project_id,
+            site_id=xnat_data_source.site_id,
             config_file=config_file
         )
 
         if not subjects_in_db:
-            logger.info(f"No subjects found for {redcap_data_source.project_id}::{redcap_data_source.site_id}.")
+            logger.info(f"No subjects found for {xnat_data_source.project_id}::{xnat_data_source.site_id}.")
             Logs(
                 log_level="INFO",
                 log_message={
-                    "event": "redcap_data_pull_no_subjects",
-                    "message": f"No subjects found for {redcap_data_source.project_id}::{redcap_data_source.site_id}.",
-                    "project_id": redcap_data_source.project_id,
-                    "site_id": redcap_data_source.site_id,
-                    "data_source_name": redcap_data_source.data_source_name,
+                    "event": "xnat_data_pull_no_subjects",
+                    "message": f"No subjects found for {xnat_data_source.project_id}::{xnat_data_source.site_id}.",
+                    "project_id": xnat_data_source.project_id,
+                    "site_id": xnat_data_source.site_id,
+                    "data_source_name": xnat_data_source.data_source_name,
                 },
             ).insert(config_file)
             continue
 
-        logger.info(f"Found {len(subjects_in_db)} subjects for {redcap_data_source.data_source_name}.")
+        logger.info(f"Found {len(subjects_in_db)} subjects for {xnat_data_source.data_source_name}.")
         Logs(
             log_level="INFO",
             log_message={
-                "event": "redcap_data_pull_subjects_found",
-                "message": f"Found {len(subjects_in_db)} subjects for {redcap_data_source.data_source_name}.",
+                "event": "xnat_data_pull_subjects_found",
+                "message": f"Found {len(subjects_in_db)} subjects for {xnat_data_source.data_source_name}.",
                 "count": len(subjects_in_db),
-                "project_id": redcap_data_source.project_id,
-                "site_id": redcap_data_source.site_id,
-                "data_source_name": redcap_data_source.data_source_name,
+                "project_id": xnat_data_source.project_id,
+                "site_id": xnat_data_source.site_id,
+                "data_source_name": xnat_data_source.data_source_name,
             },
         ).insert(config_file)
 
         for subject in subjects_in_db:
             start_time = datetime.now()
             raw_data = fetch_subject_data(
-                redcap_data_source=redcap_data_source,
+                xnat_data_source=xnat_data_source,
                 subject_id=subject.subject_id,
                 encryption_passphrase=encryption_passphrase,
             )
@@ -548,7 +590,7 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
                     project_id=subject.project_id,
                     site_id=subject.site_id,
                     subject_id=subject.subject_id,
-                    data_source_name=redcap_data_source.data_source_name,
+                    data_source_name=xnat_data_source.data_source_name,
                     config_file=config_file,
                 )
                 if result:
@@ -558,14 +600,14 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
 
                     data_pull = DataPull(
                         subject_id=subject.subject_id,
-                        data_source_name=redcap_data_source.data_source_name,
+                        data_source_name=xnat_data_source.data_source_name,
                         site_id=subject.site_id,
                         project_id=subject.project_id,
                         file_path=str(file_path),
                         file_md5=file_md5,
                         pull_time_s=pull_time_s,
                         pull_metadata={
-                            "redcap_endpoint": redcap_data_source.data_source_metadata.endpoint_url,
+                            "xnat_endpoint": xnat_data_source.data_source_metadata.endpoint_url,
                             "records_pulled_bytes": len(raw_data),
                         },
                     )
@@ -580,3 +622,47 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
                             site_id=subject.site_id,
                             config_file=config_file,
                         )
+            break # Stop after the first subject
+
+    Logs(
+        log_level="INFO",
+        log_message={
+            "event": "xnat_data_pull_complete",
+            "message": "Finished XNAT data pull process.",
+            "project_id": project_id,
+            "site_id": site_id,
+            "push_to_sink": push_to_sink,
+        },
+    ).insert(config_file)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Pull XNAT data for all or specific project/site.")
+    parser.add_argument('--project_id', type=str, default=None, help='Project ID to pull data for (optional)')
+    parser.add_argument('--site_id', type=str, default=None, help='Site ID to pull data for (optional)')
+    parser.add_argument('--push_to_sink', action='store_true', help='Push pulled files to data sink')
+    args = parser.parse_args()
+
+    config_file = Path(__file__).resolve().parents[4] / "sample.config.ini"
+    print(f"Resolved config_file path: {config_file}") # Debugging line
+    logs.configure_logging(
+        config_file=config_file, module_name=MODULE_NAME, logger=logger
+    )
+
+    logger.info("Starting XNAT data pull...")
+
+    if not config_file.exists():
+        logger.error(f"Config file does not exist: {config_file}")
+        Logs(
+            log_level="FATAL",
+            log_message={
+                "event": "xnat_data_pull_config_missing",
+                "message": f"Config file does not exist: {config_file}",
+                "config_file_path": str(config_file),
+            },
+        ).insert(config_file)
+        sys.exit(1)
+
+    pull_all_data(config_file=config_file, project_id=args.project_id, site_id=args.site_id, push_to_sink=args.push_to_sink)
+
+    logger.info("Finished XNAT data pull.") 

@@ -10,6 +10,7 @@ import logging
 from typing import Any, Dict, List, Optional, cast
 from datetime import datetime
 import importlib
+from rich.logging import RichHandler
 
 file = Path(__file__).resolve()
 parent = file.parent
@@ -65,12 +66,12 @@ def get_files_to_push(config_file: Path) -> List[File]:
             file_obj.md5 = file_md5 # Assign the retrieved MD5
             files_to_push.append(file_obj)
         except FileNotFoundError:
-            logger.warning(f"File not found on disk, skipping: {row["file_path"]}")
+            logger.warning(f"File not found on disk, skipping: {row['file_path']}")
             Logs(
                 log_level="WARN",
                 log_message={
                     "event": "data_push_file_not_found",
-                    "message": f"File not found on disk, skipping: {row["file_path"]}",
+                    "message": f"File not found on disk, skipping: {row['file_path']}",
                     "file_path": row["file_path"],
                 },
             ).insert(config_file)
