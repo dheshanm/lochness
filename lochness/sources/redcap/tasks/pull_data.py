@@ -118,40 +118,43 @@ def save_subject_data(
 ) -> Optional[tuple[Path, str]]:
     """
     Saves the fetched subject data to the file system and records it in the database.
-
-    Args:
-        data (bytes): The raw data to save.
-        project_id (str): The project ID.
-        site_id (str): The site ID.
-        subject_id (str): The subject ID.
-        data_source_name (str): The name of the data source.
-        config_file (Path): Path to the config file.
-
-    Returns:
-        Optional[Path]: The path to the saved file, or None if saving fails.
+    Uses the new path pattern for REDCap JSON files.
     """
     try:
-        # Define the path where the data will be stored
-        # Example: <lochness_root>/data/<project_id>/<site_id>/<data_source_name>/<subject_id>/<timestamp>.csv
         lochness_root = config.parse(config_file, 'general')['lochness_root']
-        output_dir = Path(lochness_root) / "data" / project_id / site_id / data_source_name / subject_id
+        # Determine all REDCap data source instance names for this project+site
+        sql_query = f"""
+            SELECT data_source_name FROM data_sources
+            WHERE project_id = '{project_id}' AND site_id = '{site_id}' AND data_source_type = 'redcap'
+        """
+        df = db.execute_sql(config_file, sql_query)
+        instance_names = sorted(df['data_source_name'].tolist()) if not df.empty else [data_source_name]
+        # The 'first' instance is the first in alphabetical order
+        is_first_redcap = (data_source_name == instance_names[0])
+        # Capitalize project name (first letter uppercase, rest lowercase)
+        project_name_cap = project_id[:1].upper() + project_id[1:].lower() if project_id else project_id
+        # Build output path
+        output_dir = (
+            Path(lochness_root)
+            / project_name_cap
+            / "PHOENIX"
+            / "PROTECTED"
+            / f"{project_name_cap}{site_id}"
+            / "raw"
+            / subject_id
+            / "surveys"
+        )
         output_dir.mkdir(parents=True, exist_ok=True)
-
-        timestamp = utils.get_timestamp()
-        file_name = f"{timestamp}.json" # Changed from CSV to JSON format
+        file_name = f"{subject_id}.{project_name_cap}.{data_source_name}.json"
         file_path = output_dir / file_name
-
         with open(file_path, "wb") as f:
             f.write(data)
-
         # Record the file in the database
         file_model = File(
             file_path=file_path,
         )
         file_md5 = file_model.md5
-        # Insert file_model into the database
         db.execute_queries(config_file, [file_model.to_sql_query()], show_commands=False)
-
         Logs(
             log_level="INFO",
             log_message={
@@ -166,7 +169,6 @@ def save_subject_data(
             },
         ).insert(config_file)
         return file_path, file_md5 if file_md5 else ""
-
     except Exception as e:
         logger.error(f"Failed to save data for {subject_id}: {e}")
         Logs(
@@ -306,21 +308,32 @@ def push_to_minio_sink(
 ) -> Optional[DataPush]:
     """
     Pushes a file to a MinIO data sink.
-
-    Args:
-        file_path (Path): Path to the file to push.
-        file_md5 (str): MD5 hash of the file.
-        data_sink_id (int): The data sink ID.
-        data_sink_name (str): The data sink name.
-        data_sink_metadata (Dict[str, Any]): The data sink metadata.
-        project_id (str): The project ID.
-        site_id (str): The site ID.
-        config_file (Path): Path to the config file.
-
-    Returns:
-        Optional[DataPush]: The data push record if successful, None otherwise.
     """
     try:
+        # --- NEW LOGIC: Check for existing push with same md5 ---
+        check_push_query = f"""
+            SELECT 1 FROM data_push
+            WHERE data_sink_id = {data_sink_id}
+              AND file_path = '{str(file_path).replace("'", "''")}'
+              AND file_md5 = '{file_md5}'
+            LIMIT 1;
+        """
+        push_exists = db.execute_sql(config_file, check_push_query)
+        if not push_exists.empty:
+            logger.info(f"File {file_path} (md5={file_md5}) already pushed to MinIO sink {data_sink_name}, skipping.")
+            Logs(
+                log_level="INFO",
+                log_message={
+                    "event": "minio_data_push_already_exists",
+                    "message": f"File {file_path} (md5={file_md5}) already pushed to MinIO sink {data_sink_name}, skipping.",
+                    "file_path": str(file_path),
+                    "data_sink_name": data_sink_name,
+                    "project_id": project_id,
+                    "site_id": site_id,
+                },
+            ).insert(config_file)
+            return None
+        # --- END NEW LOGIC ---
         # Extract MinIO configuration from data sink metadata
         bucket_name = data_sink_metadata.get('bucket')
         keystore_name = data_sink_metadata.get('keystore_name')
@@ -338,7 +351,8 @@ def push_to_minio_sink(
         # Get MinIO credentials from keystore
         logger.info(f"Getting MinIO credentials for keystore: {keystore_name}, project: {project_id}")
         minio_creds = get_minio_cred(keystore_name, project_id)
-        logger.info(f"Retrieved MinIO credentials: {minio_creds}")
+        # Mask credentials in logs: only log presence, not values
+        logger.info(f"Retrieved MinIO credentials: access_key={'***' if 'access_key' in minio_creds else 'MISSING'}, secret_key={'***' if 'secret_key' in minio_creds else 'MISSING'}")
         access_key = minio_creds["access_key"]
         secret_key = minio_creds["secret_key"]
 
@@ -360,9 +374,9 @@ def push_to_minio_sink(
             logger.info(f"Bucket '{bucket_name}' already exists.")
 
         # Create object name based on file path structure
-        # Extract the relative path from the lochness data directory
+        # Extract the relative path from the lochness root directory
         lochness_root = config.parse(config_file, 'general')['lochness_root']
-        relative_path = file_path.relative_to(Path(lochness_root) / "data")
+        relative_path = file_path.relative_to(Path(lochness_root))
         object_name = str(relative_path).replace("\\", "/")  # Ensure forward slashes for S3
 
         # Upload the file

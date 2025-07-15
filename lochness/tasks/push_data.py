@@ -10,7 +10,6 @@ import logging
 from typing import Any, Dict, List, Optional, cast
 from datetime import datetime
 import importlib
-from rich.logging import RichHandler
 
 file = Path(__file__).resolve()
 parent = file.parent
@@ -40,7 +39,7 @@ logger = logging.getLogger(MODULE_NAME)
 logargs: Dict[str, Any] = {
     "level": logging.DEBUG,
     "format": "%(message)s",
-    "handlers": [RichHandler(rich_tracebacks=True)],
+    # Use default handler; RichHandler removed
 }
 logging.basicConfig(**logargs)
 
@@ -86,6 +85,7 @@ def push_file_to_sink(
 ) -> bool:
     """
     Dispatches the file push to the appropriate sink-specific handler.
+    Only pushes if the file (by path and md5) has not already been pushed to this sink.
     """
     sink_type = data_sink.data_sink_metadata.get("type")
     if not sink_type:
@@ -101,6 +101,56 @@ def push_file_to_sink(
             },
         ).insert(config_file)
         return False
+
+    # --- NEW LOGIC: Check if this file has already been pushed to this sink with this md5 ---
+    # Defensive: ensure required fields are not None
+    if data_sink.data_sink_name is None or data_sink.site_id is None or data_sink.project_id is None:
+        logger.error(f"DataSink has None for name, site_id, or project_id: {data_sink}")
+        return False
+    # Use str(...) or "" to satisfy linter
+    data_sink_name_str = str(data_sink.data_sink_name) if data_sink.data_sink_name is not None else ""
+    site_id_str = str(data_sink.site_id) if data_sink.site_id is not None else ""
+    project_id_str = str(data_sink.project_id) if data_sink.project_id is not None else ""
+    file_path_str = str(file_obj.file_path) if file_obj.file_path is not None else ""
+    file_name_str = str(file_obj.file_name) if getattr(file_obj, 'file_name', None) is not None else ""
+    # Get data_sink_id for this sink
+    get_sink_id_query = f"""
+        SELECT data_sink_id FROM data_sinks
+        WHERE data_sink_name = '{data_sink_name_str.replace("'", "''")}'
+          AND site_id = '{site_id_str.replace("'", "''")}'
+          AND project_id = '{project_id_str.replace("'", "''")}'
+        LIMIT 1;
+    """
+    sink_id_result = db.execute_sql(config_file, get_sink_id_query)
+    if sink_id_result.empty:
+        logger.error(f"Could not find data_sink_id for sink {data_sink_name_str}")
+        return False
+    data_sink_id = sink_id_result.iloc[0]["data_sink_id"]
+
+    # Check for existing push
+    check_push_query = f"""
+        SELECT 1 FROM data_push
+        WHERE data_sink_id = {data_sink_id}
+          AND file_path = '{file_path_str.replace("'", "''")}'
+          AND file_md5 = '{file_obj.md5}'
+        LIMIT 1;
+    """
+    push_exists = db.execute_sql(config_file, check_push_query)
+    if not push_exists.empty:
+        logger.info(f"File {file_name_str} (md5={file_obj.md5}) already pushed to {data_sink_name_str}, skipping.")
+        Logs(
+            log_level="INFO",
+            log_message={
+                "event": "data_push_already_exists",
+                "message": f"File {file_name_str} (md5={file_obj.md5}) already pushed to {data_sink_name_str}, skipping.",
+                "file_path": file_path_str,
+                "data_sink_name": data_sink_name_str,
+                "project_id": project_id_str,
+                "site_id": site_id_str,
+            },
+        ).insert(config_file)
+        return True  # Not an error, just skip
+    # --- END NEW LOGIC ---
 
     try:
         # Dynamically import the push module for the sink type
