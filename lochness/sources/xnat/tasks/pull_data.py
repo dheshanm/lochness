@@ -350,21 +350,32 @@ def push_to_minio_sink(
 ) -> Optional[DataPush]:
     """
     Pushes a file to a MinIO data sink.
-
-    Args:
-        file_path (Path): Path to the file to push.
-        file_md5 (str): MD5 hash of the file.
-        data_sink_id (int): The data sink ID.
-        data_sink_name (str): The data sink name.
-        data_sink_metadata (Dict[str, Any]): The data sink metadata.
-        project_id (str): The project ID.
-        site_id (str): The site ID.
-        config_file (Path): Path to the config file.
-
-    Returns:
-        Optional[DataPush]: The data push record if successful, None otherwise.
     """
     try:
+        # --- NEW LOGIC: Check for existing push with same md5 ---
+        check_push_query = f"""
+            SELECT 1 FROM data_push
+            WHERE data_sink_id = {data_sink_id}
+              AND file_path = '{str(file_path).replace("'", "''")}'
+              AND file_md5 = '{file_md5}'
+            LIMIT 1;
+        """
+        push_exists = db.execute_sql(config_file, check_push_query)
+        if not push_exists.empty:
+            logger.info(f"File {file_path} (md5={file_md5}) already pushed to MinIO sink {data_sink_name}, skipping.")
+            Logs(
+                log_level="INFO",
+                log_message={
+                    "event": "minio_data_push_already_exists",
+                    "message": f"File {file_path} (md5={file_md5}) already pushed to MinIO sink {data_sink_name}, skipping.",
+                    "file_path": str(file_path),
+                    "data_sink_name": data_sink_name,
+                    "project_id": project_id,
+                    "site_id": site_id,
+                },
+            ).insert(config_file)
+            return None
+        # --- END NEW LOGIC ---
         # Extract MinIO configuration from data sink metadata
         bucket_name = data_sink_metadata.get('bucket')
         keystore_name = data_sink_metadata.get('keystore_name')
@@ -488,7 +499,7 @@ def push_to_minio_sink(
         return None
 
 
-def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None, push_to_sink: bool = False):
+def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None, push_to_sink: bool = False, force_download: bool = False):
     """
     Main function to pull data for all active XNAT data sources and subjects.
     """
@@ -500,6 +511,7 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
             "project_id": project_id,
             "site_id": site_id,
             "push_to_sink": push_to_sink,
+            "force_download": force_download,
         },
     ).insert(config_file)
 
@@ -577,6 +589,31 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
         ).insert(config_file)
 
         for subject in subjects_in_db:
+            if not force_download:
+                # --- Check if file exists for this subject/data source ---
+                lochness_root = config.parse(config_file, 'general')['lochness_root']
+                subject_dir = Path(lochness_root) / "data" / subject.project_id / subject.site_id / xnat_data_source.data_source_name / subject.subject_id
+                check_file_query = f"""
+                    SELECT file_path FROM files
+                    WHERE file_path LIKE '{str(subject_dir).replace("'", "''")}/%'
+                    LIMIT 1;
+                """
+                file_exists = db.execute_sql(config_file, check_file_query)
+                if not file_exists.empty:
+                    logger.info(f"File(s) already exist for subject {subject.subject_id} in {subject_dir}, skipping download.")
+                    Logs(
+                        log_level="INFO",
+                        log_message={
+                            "event": "xnat_data_pull_already_exists",
+                            "message": f"File(s) already exist for subject {subject.subject_id} in {subject_dir}, skipping download.",
+                            "subject_id": subject.subject_id,
+                            "project_id": subject.project_id,
+                            "site_id": subject.site_id,
+                            "data_source_name": xnat_data_source.data_source_name,
+                            "subject_dir": str(subject_dir),
+                        },
+                    ).insert(config_file)
+                    continue
             start_time = datetime.now()
             raw_data = fetch_subject_data(
                 xnat_data_source=xnat_data_source,
@@ -641,6 +678,7 @@ if __name__ == "__main__":
     parser.add_argument('--project_id', type=str, default=None, help='Project ID to pull data for (optional)')
     parser.add_argument('--site_id', type=str, default=None, help='Site ID to pull data for (optional)')
     parser.add_argument('--push_to_sink', action='store_true', help='Push pulled files to data sink')
+    parser.add_argument('--force_download', action='store_true', help='Force download from XNAT even if files exist')
     args = parser.parse_args()
 
     config_file = Path(__file__).resolve().parents[4] / "sample.config.ini"
@@ -663,6 +701,6 @@ if __name__ == "__main__":
         ).insert(config_file)
         sys.exit(1)
 
-    pull_all_data(config_file=config_file, project_id=args.project_id, site_id=args.site_id, push_to_sink=args.push_to_sink)
+    pull_all_data(config_file=config_file, project_id=args.project_id, site_id=args.site_id, push_to_sink=args.push_to_sink, force_download=args.force_download)
 
     logger.info("Finished XNAT data pull.") 
