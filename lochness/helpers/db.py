@@ -267,15 +267,9 @@ def fetch_record(
 
     # Check if there is a row
     if df.shape[0] == 0:
-        print("DEBUG (fetch_record): No rows returned.")
         return None
 
-    print(query)
-    print(df)
     value = df.iloc[0, 0]
-    print(f"DEBUG (fetch_record): Value from DataFrame: {value}")
-    print(f"DEBUG (fetch_record): Type of value: {type(value)}")
     if isinstance(value, tuple) and len(value) == 1:
-        print(f"DEBUG (fetch_record): Unpacking tuple: {value[0]}")
         return value[0]
     return value
