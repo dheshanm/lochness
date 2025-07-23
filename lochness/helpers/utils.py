@@ -50,20 +50,21 @@ def get_console() -> Console:
 def get_config_file_path() -> Path:
     """
     Returns the path to the config file.
-    Checks <repo_root>/config.ini and <repo_root>/lochness_v2/config.ini.
-    Returns the first that exists, else raises FileNotFoundError.
+
+    Returns:
+        str: The path to the config file.
+
+    Raises:
+        ConfigFileNotFoundExeption: If the config file is not found.
     """
     repo_root = cli.get_repo_root()
-    candidates = [
-        Path(repo_root) / "config.ini",
-        Path(repo_root) / "lochness_v2" / "config.ini",
-        Path(repo_root) / "sample.config.ini",
-        Path(repo_root) / "lochness_v2" / "sample.config.ini",
-    ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    raise FileNotFoundError(f"Config file not found in any of: {[str(c) for c in candidates]}")
+    config_file_path = repo_root + "/config.ini"
+
+    # Check if config_file_path exists
+    if not Path(config_file_path).is_file():
+        raise FileNotFoundError(f"Config file not found at {config_file_path}")
+
+    return Path(config_file_path)
 
 
 def get_timestamp() -> str:
