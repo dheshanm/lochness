@@ -79,3 +79,9 @@ class Project(BaseModel):
         """
 
         return sql_query
+
+    def delete_record_query(self) -> str:
+        """Generate a query to delete a record from the table"""
+        query = f"""DELETE FROM projects
+        WHERE project_id = '{self.project_id}';"""
+        return query

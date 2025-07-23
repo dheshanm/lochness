@@ -38,7 +38,7 @@ class DataPull(BaseModel):
         Returns the SQL query to create the database table for data pulls.
         """
         sql_query = """
-            CREATE TABLE data_pull (
+            CREATE TABLE IF NOT EXISTS data_pull (
                 data_pull_id SERIAL PRIMARY KEY,
                 subject_id TEXT NOT NULL,
                 data_source_name TEXT NOT NULL,

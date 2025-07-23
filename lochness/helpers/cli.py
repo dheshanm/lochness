@@ -329,9 +329,14 @@ def send_email(
 def get_repo_root() -> str:
     """
     Returns the root directory of the current Git repository.
-
     Uses the command `git rev-parse --show-toplevel` to get the root directory.
+    If not in a git repo, falls back to the current working directory.
     """
-    repo_root = subprocess.check_output(["git", "rev-parse", "--show-toplevel"])
-    repo_root = repo_root.decode("utf-8").strip()
-    return repo_root
+    try:
+        repo_root = subprocess.check_output(["git", "rev-parse", "--show-toplevel"])
+        repo_root = repo_root.decode("utf-8").strip()
+        return repo_root
+    except Exception:
+        # Not a git repo, fallback to cwd
+        logger.warning("Not a git repository. Falling back to current working directory as repo root.")
+        return str(Path.cwd())

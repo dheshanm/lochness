@@ -8,6 +8,7 @@ It will refresh the metadata for all active REDCap data sources in the database.
 
 import sys
 from pathlib import Path
+import argparse
 
 file = Path(__file__).resolve()
 parent = file.parent
@@ -31,8 +32,10 @@ import pandas as pd
 import requests
 from rich.logging import RichHandler
 
-from lochness.helpers import logs, utils, db
+from lochness.helpers import logs, utils, db, config
 from lochness.models.subjects import Subject
+from lochness.models.keystore import KeyStore
+from lochness.models.logs import Logs # Added Logs model
 from lochness.sources.redcap.models.data_source import RedcapDataSource
 
 MODULE_NAME = "lochness.sources.redcap.tasks.refresh_metadata"
@@ -50,14 +53,17 @@ logging.basicConfig(**logargs)
 
 
 def fetch_metadata(
-    redcap_data_source: RedcapDataSource, timeout_s: int = 30
+    redcap_data_source: RedcapDataSource, 
+    encryption_passphrase: str,
+    timeout_s: int = 30
 ) -> Optional[pd.DataFrame]:
     """
     Refreshes the metadata for a given REDCap data source.
 
     Args:
         redcap_data_source (RedcapDataSource): The REDCap data source to refresh.
-        config_file (Path): Path to the config file.
+        encryption_passphrase (str): The encryption passphrase for keystore access.
+        timeout_s (int): Timeout for the API request.
 
     Returns:
         Optional[pd.DataFrame]: A DataFrame containing the metadata for the REDCap data source.
@@ -72,12 +78,23 @@ def fetch_metadata(
     identifier = f"{project_id}::{site_id}::{data_source_name}"
     logger.info(f"Refreshing metadata for {identifier}...")
 
+    # Get API token from keystore
+    config_file = utils.get_config_file_path()
+    # config_file = Path(__file__).resolve().parents[3] / "sample.config.ini"
+    query = KeyStore.retrieve_key_query(
+        redcap_data_source.data_source_metadata.keystore_name, 
+        project_id, 
+        encryption_passphrase
+    )
+    api_token_df = db.execute_sql(config_file, query)
+    api_token = api_token_df['key_value'][0]
+
     optional_variables_dictionary = (
         redcap_data_source.data_source_metadata.optional_variables_dictionary
     )
 
     data = {
-        "token": redcap_data_source.data_source_metadata.api_token,
+        "token": api_token,
         "content": "record",
         "action": "export",
         "format": "json",
@@ -187,28 +204,104 @@ def insert_metadata(
     )
 
 
-def refresh_all_metadata(config_file: Path):
+def refresh_all_metadata(config_file: Path, project_id: str = None, site_id: str = None):
+    # Log start of the refresh process
+    Logs(
+        log_level="INFO",
+        log_message={
+            "event": "redcap_metadata_refresh_start",
+            "message": "Starting REDCap metadata refresh process.",
+            "project_id": project_id,
+            "site_id": site_id,
+        },
+    ).insert(config_file)
+
+    # Get encryption passphrase from config
+    encryption_passphrase = config.parse(config_file, 'general')['encryption_passphrase']
+    
     active_redcap_data_sources = RedcapDataSource.get_all_redcap_data_sources(
-        config_file=config_file, active_only=True
+        config_file=config_file, 
+        encryption_passphrase=encryption_passphrase,
+        active_only=True
     )
+
+    # Filter by project_id and/or site_id if provided
+    if project_id:
+        active_redcap_data_sources = [ds for ds in active_redcap_data_sources if ds.project_id == project_id]
+    if site_id:
+        active_redcap_data_sources = [ds for ds in active_redcap_data_sources if ds.site_id == site_id]
 
     if not active_redcap_data_sources:
         logger.info("No active REDCap data sources found.")
+        Logs(
+            log_level="INFO",
+            log_message={
+                "event": "redcap_metadata_refresh_no_active_sources",
+                "message": "No active REDCap data sources found for refresh.",
+                "project_id": project_id,
+                "site_id": site_id,
+            },
+        ).insert(config_file)
         return
 
     logger.info(f"Found {len(active_redcap_data_sources)} active REDCap data sources.")
+    Logs(
+        log_level="INFO",
+        log_message={
+            "event": "redcap_metadata_refresh_active_sources_found",
+            "message": f"Found {len(active_redcap_data_sources)} active REDCap data sources.",
+            "count": len(active_redcap_data_sources),
+            "project_id": project_id,
+            "site_id": site_id,
+        },
+    ).insert(config_file)
 
     for redcap_data_source in active_redcap_data_sources:
+        # Log start of metadata fetch for each data source
+        Logs(
+            log_level="INFO",
+            log_message={
+                "event": "redcap_metadata_fetch_start",
+                "message": f"Starting metadata fetch for {redcap_data_source.data_source_name}.",
+                "project_id": redcap_data_source.project_id,
+                "site_id": redcap_data_source.site_id,
+                "data_source_name": redcap_data_source.data_source_name,
+            },
+        ).insert(config_file)
+
         source_metadata = fetch_metadata(
             redcap_data_source=redcap_data_source,
+            encryption_passphrase=encryption_passphrase,
         )
         if source_metadata is None:
+            # Log failed metadata fetch
+            Logs(
+                log_level="ERROR",
+                log_message={
+                    "event": "redcap_metadata_fetch_failed",
+                    "message": f"Failed to fetch metadata for {redcap_data_source.data_source_name}.",
+                    "project_id": redcap_data_source.project_id,
+                    "site_id": redcap_data_source.site_id,
+                    "data_source_name": redcap_data_source.data_source_name,
+                },
+            ).insert(config_file)
             continue
 
         logger.info(
             f"Fetched metadata for {redcap_data_source.data_source_name} "
             f"({len(source_metadata)} records)"
         )
+        Logs(
+            log_level="INFO",
+            log_message={
+                "event": "redcap_metadata_fetch_success",
+                "message": f"Fetched metadata for {redcap_data_source.data_source_name}.",
+                "project_id": redcap_data_source.project_id,
+                "site_id": redcap_data_source.site_id,
+                "data_source_name": redcap_data_source.data_source_name,
+                "records_fetched": len(source_metadata),
+            },
+        ).insert(config_file)
 
         filtered_metadata = filter_metadata(
             df=source_metadata,
@@ -219,6 +312,17 @@ def refresh_all_metadata(config_file: Path):
             f"Filtered metadata for {redcap_data_source.data_source_name} "
             f"({len(filtered_metadata)} records)"
         )
+        Logs(
+            log_level="INFO",
+            log_message={
+                "event": "redcap_metadata_filter_success",
+                "message": f"Filtered metadata for {redcap_data_source.data_source_name}.",
+                "project_id": redcap_data_source.project_id,
+                "site_id": redcap_data_source.site_id,
+                "data_source_name": redcap_data_source.data_source_name,
+                "records_filtered": len(filtered_metadata),
+            },
+        ).insert(config_file)
 
         insert_metadata(
             df=filtered_metadata,
@@ -226,10 +330,27 @@ def refresh_all_metadata(config_file: Path):
             site_id=redcap_data_source.site_id,
             config_file=config_file,
         )
+        Logs(
+            log_level="INFO",
+            log_message={
+                "event": "redcap_metadata_insert_success",
+                "message": f"Inserted/updated metadata for {len(filtered_metadata)} subjects.",
+                "project_id": redcap_data_source.project_id,
+                "site_id": redcap_data_source.site_id,
+                "data_source_name": redcap_data_source.data_source_name,
+                "subjects_processed": len(filtered_metadata),
+            },
+        ).insert(config_file)
 
 
 if __name__ == "__main__":
-    config_file = utils.get_config_file_path()
+    parser = argparse.ArgumentParser(description="Refresh REDCap metadata for all or specific project/site.")
+    parser.add_argument('--project_id', type=str, default=None, help='Project ID to refresh (optional)')
+    parser.add_argument('--site_id', type=str, default=None, help='Site ID to refresh (optional)')
+    args = parser.parse_args()
+
+    # config_file = Path(__file__).resolve().parents[3] / "sample.config.ini"
+    config_file = Path(__file__).resolve().parents[4] / "sample.config.ini"
     logs.configure_logging(
         config_file=config_file, module_name=MODULE_NAME, logger=logger
     )
@@ -238,8 +359,25 @@ if __name__ == "__main__":
 
     if not config_file.exists():
         logger.error(f"Config file does not exist: {config_file}")
+        Logs(
+            log_level="FATAL",
+            log_message={
+                "event": "redcap_metadata_refresh_config_missing",
+                "message": f"Config file does not exist: {config_file}",
+                "config_file_path": str(config_file),
+            },
+        ).insert(config_file)
         sys.exit(1)
 
-    refresh_all_metadata(config_file=config_file)
+    refresh_all_metadata(config_file=config_file, project_id=args.project_id, site_id=args.site_id)
 
     logger.info("Finished refreshing REDCap metadata.")
+    Logs(
+        log_level="INFO",
+        log_message={
+            "event": "redcap_metadata_refresh_complete",
+            "message": "Finished REDCap metadata refresh process.",
+            "project_id": args.project_id,
+            "site_id": args.site_id,
+        },
+    ).insert(config_file)

@@ -18,7 +18,12 @@ def compute_hash(file_path: Path, hash_type: str = "md5") -> str:
         str: The computed hash digest of the file.
     """
     with open(file_path, "rb") as file:
-        file_hash = hashlib.file_digest(file, hash_type)
-        hash_str = file_hash.hexdigest()
+        hash_func = hashlib.md5() if hash_type == "md5" else hashlib.sha256() # Add other hash types as needed
+        while True:
+            chunk = file.read(8192)  # Read in 8KB chunks
+            if not chunk:
+                break
+            hash_func.update(chunk)
+    hash_str = hash_func.hexdigest()
 
     return hash_str

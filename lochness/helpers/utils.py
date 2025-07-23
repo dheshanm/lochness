@@ -65,3 +65,11 @@ def get_config_file_path() -> Path:
         raise FileNotFoundError(f"Config file not found at {config_file_path}")
 
     return Path(config_file_path)
+
+
+def get_timestamp() -> str:
+    """
+    Returns the current timestamp as a string in YYYYMMDD_HHMMSS format.
+    """
+    from datetime import datetime
+    return datetime.now().strftime("%Y%m%d_%H%M%S")

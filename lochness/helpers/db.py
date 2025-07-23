@@ -138,6 +138,8 @@ def execute_queries(
 
     try:
         credentials = get_db_credentials(config_file=config_file, db=db)
+        masked_credentials = {key: (value if key != "password" else "***") for key, value in credentials.items()}
+        logger.debug(f"Database credentials: {masked_credentials}")
         conn: psycopg2.extensions.connection = psycopg2.connect(**credentials)
         cur = conn.cursor()
 
@@ -176,6 +178,11 @@ def execute_queries(
         if command is not None:
             logger.error(f"[red]For query: {command}", extra={"markup": True})
         logger.error(e)
+
+        # Check for specific connection error related to hostname resolution
+        if isinstance(e, psycopg2.OperationalError) and "could not translate host name" in str(e):
+            logger.error("[bold yellow]HINT: This error often indicates a network issue, such as an incorrect hostname or a missing VPN connection. Please ensure your VPN is connected if required.", extra={"markup": True})
+
         if on_failure is not None:
             on_failure()
         else:
@@ -244,7 +251,7 @@ def execute_sql(
 
 def fetch_record(
     config_file: Path, query: str, db: str = "postgresql"
-) -> Optional[str]:
+) -> Optional[Any]:
     """
     Fetches a single record from the database using the provided SQL query.
 
@@ -263,5 +270,6 @@ def fetch_record(
         return None
 
     value = df.iloc[0, 0]
-
-    return str(value)
+    if isinstance(value, tuple) and len(value) == 1:
+        return value[0]
+    return value

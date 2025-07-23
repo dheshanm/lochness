@@ -68,7 +68,7 @@ class DataSource(BaseModel):
         data_source_metadata = db.sanitize_json(self.data_source_metadata)
         sql_query = f"""
             INSERT INTO data_sources (
-                data_source_name, is_active, site_id,
+                data_source_name, data_source_is_active, site_id,
                 project_id, data_source_type, data_source_metadata
             ) VALUES (
                 '{self.data_source_name}', {self.is_active}, '{self.site_id}',
