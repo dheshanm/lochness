@@ -19,7 +19,6 @@ def compute_hash(file_path: Path, hash_type: str = "md5") -> str:
     """
     with open(file_path, "rb") as file:
         hash_func = hashlib.md5() if hash_type == "md5" else hashlib.sha256() # Add other hash types as needed
-    with open(file_path, "rb") as file:
         while True:
             chunk = file.read(8192)  # Read in 8KB chunks
             if not chunk:
