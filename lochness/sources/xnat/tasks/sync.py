@@ -63,7 +63,7 @@ def insert_xnat_cred(key_name: str, key_value: str, project_id: str):
         project_id=project_id,
         key_metadata={
             "description": "Access token for XNAT",
-            "created_by": "lochness_script"}
+            "created_by": f"{MODULE_NAME}"}
     )
 
     insert_query = my_key.to_sql_query(
