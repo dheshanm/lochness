@@ -113,36 +113,23 @@ def push_file_to_sink(
     project_id_str = str(data_sink.project_id) if data_sink.project_id is not None else ""
     file_path_str = str(file_obj.file_path) if file_obj.file_path is not None else ""
     file_name_str = str(file_obj.file_name) if getattr(file_obj, 'file_name', None) is not None else ""
-    # Get data_sink_id for this sink
-    get_sink_id_query = f"""
-        SELECT data_sink_id FROM data_sinks
-        WHERE data_sink_name = '{data_sink_name_str.replace("'", "''")}'
-          AND site_id = '{site_id_str.replace("'", "''")}'
-          AND project_id = '{project_id_str.replace("'", "''")}'
-        LIMIT 1;
-    """
-    sink_id_result = db.execute_sql(config_file, get_sink_id_query)
-    if sink_id_result.empty:
-        logger.error(f"Could not find data_sink_id for sink {data_sink_name_str}")
-        return False
-    data_sink_id = sink_id_result.iloc[0]["data_sink_id"]
 
-    # Check for existing push
-    check_push_query = f"""
-        SELECT 1 FROM data_push
-        WHERE data_sink_id = {data_sink_id}
-          AND file_path = '{file_path_str.replace("'", "''")}'
-          AND file_md5 = '{file_obj.md5}'
-        LIMIT 1;
-    """
-    push_exists = db.execute_sql(config_file, check_push_query)
-    if not push_exists.empty:
-        logger.info(f"File {file_name_str} (md5={file_obj.md5}) already pushed to {data_sink_name_str}, skipping.")
+    dataSink = DataSink.get_matching_data_sink(config_file,
+                                               data_sink_name_str,
+                                               site_id_str,
+                                               project_id_str)
+
+    if dataSink.is_file_already_pushed(config_file,
+                                       file_path_str,
+                                       file_obj.md5):
+        msg = f"File {file_name_str} (md5={file_obj.md5}) already " \
+              f"pushed to {data_sink_name_str}, skipping."
+        logger.info(msg)
         Logs(
             log_level="INFO",
             log_message={
                 "event": "data_push_already_exists",
-                "message": f"File {file_name_str} (md5={file_obj.md5}) already pushed to {data_sink_name_str}, skipping.",
+                "message": msg,
                 "file_path": file_path_str,
                 "data_sink_name": data_sink_name_str,
                 "project_id": project_id_str,
@@ -150,7 +137,6 @@ def push_file_to_sink(
             },
         ).insert(config_file)
         return True  # Not an error, just skip
-    # --- END NEW LOGIC ---
 
     try:
         # Dynamically import the push module for the sink type
