@@ -53,7 +53,6 @@ def get_config_file_path() -> Path:
     Checks <repo_root>/config.ini and <repo_root>/lochness_v2/config.ini.
     Returns the first that exists, else raises FileNotFoundError.
     """
-    from pathlib import Path
     repo_root = cli.get_repo_root()
     candidates = [
         Path(repo_root) / "config.ini",
