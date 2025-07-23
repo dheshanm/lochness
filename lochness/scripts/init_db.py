@@ -2,33 +2,14 @@
 """
 Initializes the database.
 """
-
 import sys
-from pathlib import Path
-
-file = Path(__file__).resolve()
-parent = file.parent
-root_dir = None  # pylint: disable=invalid-name
-for parent in file.parents:
-    if parent.name == "lochness-v2":
-        root_dir = parent
-
-sys.path.append(str(root_dir))
-
-# remove current directory from path
-try:
-    sys.path.remove(str(parent))
-except ValueError:
-    pass
-
 import logging
 from typing import Dict, Any
 
 from rich.logging import RichHandler
 
-from lochness.helpers import utils, logs
-from lochness import models
-from lochness.models.jobs import Job
+from lochness.helpers import utils
+from lochness.models import init_db
 
 MODULE_NAME = "lochness.scripts.init_db"
 
@@ -45,50 +26,11 @@ logargs: Dict[str, Any] = {
 logging.basicConfig(**logargs)
 
 
-def initialize_db(config_file: Path):
-    """
-    Initializes the database.
-
-    WARNING: This will drop all tables and recreate them.
-    DO NOT RUN THIS IN PRODUCTION.
-
-    Args:
-        config_file (Path): Path to the config file.
-    """
-    logger.info("Initializing database...")
-    logger.warning("This will delete all existing data in the database!")
-
-    # Add jobs table to the initialization
-    from lochness import models
-    models.init_db(config_file=config_file)
-    # Create jobs table if not exists
-    import psycopg2
-    from lochness.helpers import db
-    queries = [Job.init_db_table_query()]
-    db.execute_queries(config_file=config_file, queries=queries, show_commands=False)
-
-    complete_log = models.Logs(
-        log_message={
-            "message": "Database initialized",
-        },
-        log_level="INFO"
-    )
-    complete_log.insert(config_file=config_file)
-
-
 if __name__ == "__main__":
     config_file = utils.get_config_file_path()
-    logs.configure_logging(
-        config_file=config_file, module_name=MODULE_NAME, logger=logger, use_db=False
-    )
-
-    console.rule(f"[bold red]{MODULE_NAME}")
-    logger.info(f"Using config file: {config_file}")
-
     if not config_file.exists():
         logger.error(f"Config file does not exist: {config_file}")
         sys.exit(1)
 
-    initialize_db(config_file=config_file)
-
+    init_db(config_file=config_file)
     logger.info("Done!")
