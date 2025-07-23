@@ -109,3 +109,69 @@ class DataSink(BaseModel):
                 continue
             data_sinks.append(data_sink)
         return data_sinks
+
+
+    @staticmethod
+    def get_matching_data_sink(config_file: Path,
+                               data_sink_name: str,
+                               site_id: str,
+                               project_id: str,
+                               active_only: bool = False,
+                               ) -> DataSink:
+        """
+        Retrieves the matching data sink
+
+        Args:
+            config_file (Path): Path to the configuration file.
+            data_sink_name (str): Name of the data sink.
+            site_id (str): Site ID.
+            project_id (str): Project ID.
+            active_only (bool): If True, only return active data sinks (based on metadata).
+
+        Returns:
+            List[DataSink]: A list of DataSink objects.
+        """
+
+
+        query = f"""SELECT data_sink_name, site_id, project_id, data_sink_metadata
+        FROM data_sinks
+        WHERE data_sink_name = '{data_sink_name}'
+            AND site_id = '{site_id}'
+            AND project_id = '{project_id}'
+        LIMIT 1;
+        """
+        query = "SELECT data_sink_name, site_id, project_id, data_sink_metadata FROM data_sinks;"
+        data_sinks_df = db.execute_sql(config_file, query)
+        row = data_sinks_df.iloc[0]
+        data_sink = DataSink(
+            data_sink_name=row["data_sink_name"],
+            site_id=row["site_id"],
+            project_id=row["project_id"],
+            data_sink_metadata=row["data_sink_metadata"],
+        )
+
+        if active_only and not data_sink.data_sink_metadata.get(
+                "active", False):
+            return None
+
+        return data_sink
+
+
+    def is_file_already_pushed(self,
+                               config_file: Path,
+                               file_path: Path,
+                               md5: str) -> bool:
+        query = f"""
+            SELECT 1 FROM data_push
+            WHERE data_sink_name = {self.data_sink_name}
+              AND site_id = {self.site_id}
+              AND project_id = {self.project_id}
+              AND file_path = '{file_path}'
+              AND file_md5 = '{md5}'
+            LIMIT 1;
+            """
+        push_exists = db.execute_sql(config_file, query)
+        if not push_exists.empty:
+            return False
+        else:
+            return True
