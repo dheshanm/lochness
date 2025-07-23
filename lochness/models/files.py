@@ -3,11 +3,13 @@
 File Model
 """
 
+import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
 from lochness.helpers import db
 from lochness.helpers.hash import compute_hash
+from lochness.models.logs import Logs
 
 
 class File:
@@ -117,3 +119,60 @@ class File:
         sql_query = db.handle_null(sql_query)
 
         return sql_query
+
+    @staticmethod
+    def get_all_files_in_df(config_file: Path) -> pd.DataFrame:
+        """
+        Return the files to push for a given project and site.
+        """
+        sql_query = "SELECT * FROM files"""
+        sql_query = db.handle_null(sql_query)
+        files_df = db.execute_sql(config_file, sql_query)
+
+        return files_df
+
+    @staticmethod
+    def get_all_files_in_df_detailed(config_file: Path) -> pd.DataFrame:
+        """
+        Return the files to push for a given project and site.
+        """
+        sql_query = """
+        SELECT * FROM files
+        LEFT JOIN data_pull on (data_pull.file_path = files.file_path AND
+        data_pull.file_md5 = files.file_md5)
+        """
+        sql_query = db.handle_null(sql_query)
+        files_df = db.execute_sql(config_file, sql_query)
+
+        return files_df
+    
+    @staticmethod
+    def get_files_to_push(config_file: Path) -> list['File']:
+        """
+        Return the files to push for a given project and site.
+        """
+        files_df = File.get_all_files_in_df(config_file)
+        files_to_push = []
+        for _, row in files_df.iterrows():
+            try:
+                file_path = Path(row["file_path"])
+                file_md5 = row["file_md5"]
+                file_obj = File(file_path=file_path, with_hash=False)
+                file_obj.md5 = file_md5
+
+                # extra
+                file_obj.data_source_name = row["data_source_name"]
+                file_obj.subject_id = row["subject_id"]
+                file_obj.site_id = row["site_id"]
+                file_obj.project_id = row["project_id"]
+                files_to_push.append(file_obj)
+            except FileNotFoundError:
+                Logs(
+                    log_level="WARN",
+                    log_message={
+                        "event": "data_push_file_not_found",
+                        "message": f"File not found on disk, skipping: {row['file_path']}",
+                        "file_path": row["file_path"],
+                    },
+                ).insert(config_file)
+        return files_to_push
