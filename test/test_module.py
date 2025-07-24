@@ -125,7 +125,6 @@ def test_pipeline_with_fake_data(fake_data_fixture):
 
 def delete_fake_records(project_id, project_name, site_id, site_name, subject_id):
     test_file = Path('test_file.zip')
-    test_file.touch()
 
     fileObj = File(
             file_path=test_file,
@@ -144,6 +143,7 @@ def delete_fake_records(project_id, project_name, site_id, site_name, subject_id
 
 
     db.execute_queries(config_file, [fileObj.delete_record_query()])
+    os.remove(test_file)
 
 
 
