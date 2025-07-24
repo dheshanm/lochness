@@ -14,6 +14,7 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
 from lochness.models.projects import Project
+from lochness.models.keystore import KeyStore
 from lochness.models.sites import Site
 from lochness.models.subjects import Subject
 from lochness.models.data_source import DataSource
@@ -33,6 +34,31 @@ def create_fake_records(project_id, project_name, site_id, site_name, subject_id
             project_metadata={'testing': True}
             )
     db.execute_queries(config_file, [project.to_sql_query()])
+
+    encryption_passphrase = config.parse(config_file, 'general')[
+            'encryption_passphrase']
+
+    redcap_cred = config.parse(config_file, 'redcap-test')
+    # create key store
+    keystore = KeyStore(
+            key_name=redcap_cred['key_name'],
+            key_value=redcap_cred['key_value'],
+            key_type=redcap_cred['key_type'],
+            project_id=project_id,
+            key_metadata={})
+    db.execute_queries(config_file,
+                       [keystore.to_sql_query(encryption_passphrase)])
+
+    minio_cred = config.parse(config_file, 'datasink-test')
+    # create key store
+    keystore = KeyStore(
+            key_name=minio_cred['key_name'],
+            key_value=minio_cred['key_value'],
+            key_type=minio_cred['key_type'],
+            project_id=project_id,
+            key_metadata={})
+    db.execute_queries(config_file,
+                       [keystore.to_sql_query(encryption_passphrase)])
 
 
     # create fake site
@@ -176,6 +202,28 @@ def delete_fake_records(project_id, project_name, site_id, site_name, subject_id
             site_metadata={'testing': True}
             )
     db.execute_queries(config_file, [site.delete_record_query()])
+
+    redcap_cred = config.parse(config_file, 'redcap-test')
+    # create key store
+    keystore = KeyStore(
+            key_name=redcap_cred['key_name'],
+            key_value=redcap_cred['key_value'],
+            key_type=redcap_cred['key_type'],
+            project_id=project_id,
+            key_metadata={})
+    db.execute_queries(config_file,
+                       [keystore.delete_record_query()])
+
+    minio_cred = config.parse(config_file, 'datasink-test')
+    # create key store
+    keystore = KeyStore(
+            key_name=minio_cred['key_name'],
+            key_value=minio_cred['key_value'],
+            key_type=minio_cred['key_type'],
+            project_id=project_id,
+            key_metadata={})
+    db.execute_queries(config_file,
+                       [keystore.delete_record_query()])
 
     # create fake project
     project = Project(

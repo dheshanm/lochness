@@ -108,3 +108,12 @@ class KeyStore(BaseModel):
         if key_value_raw:
             return KeyStore(key_name=key_name, key_value=key_value_raw, key_type="", project_id=project_id)
         return None
+
+    def delete_record_query(self) -> str:
+        """Generate a query to delete a record from the table"""
+        key_name = db.sanitize_string(self.key_name)
+        project_id = db.sanitize_string(self.project_id)
+        query = f"""DELETE FROM key_store
+        WHERE key_name = '{key_name}'
+          AND project_id = '{project_id}';"""
+        return query
