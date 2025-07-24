@@ -35,11 +35,13 @@ def test_push_file_to_sink(fake_data_fixture):
             data_sink_name=DATASINK_NAME,
             site_id=SITE_ID,
             project_id=PROJECT_ID,
-            data_sink_metadata={})
+            data_sink_metadata={'type': 'minio'})
     config_file = utils.get_config_file_path()
     encryption_passphrase = config.parse(config_file, 'general')[
             'encryption_passphrase']
-    push_file_to_sink(file_obj, dataSink, config_file, encryption_passphrase)
+    result = push_file_to_sink(file_obj, dataSink, config_file,
+                               encryption_passphrase)
+    assert result
 
 
 def test_push_all_data(fake_data_fixture):

@@ -163,11 +163,14 @@ class DataSink(BaseModel):
                                md5: str) -> bool:
         query = f"""
             SELECT 1 FROM data_push
-            WHERE data_sink_name = {self.data_sink_name}
-              AND site_id = {self.site_id}
-              AND project_id = {self.project_id}
-              AND file_path = '{file_path}'
-              AND file_md5 = '{md5}'
+            LEFT JOIN data_sinks on
+              data_sinks.data_sink_id = data_push.data_sink_id
+            WHERE
+              data_sinks.data_sink_name = {self.data_sink_name}
+              AND data_sinks.site_id = {self.site_id}
+              AND data_sinks.project_id = {self.project_id}
+              AND data_push.file_path = '{file_path}'
+              AND data_push.file_md5 = '{md5}'
             LIMIT 1;
             """
         push_exists = db.execute_sql(config_file, query)
@@ -175,3 +178,12 @@ class DataSink(BaseModel):
             return False
         else:
             return True
+
+    def delete_record_query(self) -> str:
+        """Generate a query to delete a record from the table"""
+        query = f"""DELETE FROM data_sinks
+        WHERE
+          data_sink_name = '{self.data_sink_name}'
+          AND site_id = '{self.site_id}'
+          AND project_id = '{self.project_id}';"""
+        return query

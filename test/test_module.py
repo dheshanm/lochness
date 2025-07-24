@@ -16,6 +16,7 @@ sys.path.append(str(project_root))
 from lochness.models.projects import Project
 from lochness.models.keystore import KeyStore
 from lochness.models.sites import Site
+from lochness.models.data_sinks import DataSink
 from lochness.models.subjects import Subject
 from lochness.models.data_source import DataSource
 from lochness.models.data_pulls import DataPull
@@ -25,7 +26,8 @@ from lochness.helpers import logs, utils, db, config
 config_file = utils.get_config_file_path()
 
 
-def create_fake_records(project_id, project_name, site_id, site_name, subject_id):
+def create_fake_records(project_id, project_name, site_id,
+                        site_name, subject_id, datasink_name):
     # create fake project
     project = Project(
             project_id=project_id,
@@ -70,6 +72,15 @@ def create_fake_records(project_id, project_name, site_id, site_name, subject_id
             site_metadata={'testing': True}
             )
     db.execute_queries(config_file, [site.to_sql_query()])
+
+
+    # create fake datasink
+    dataSink = DataSink(
+            data_sink_name='test_minio_data_sink',
+            site_id=site_id,
+            project_id=project_id,
+            data_sink_metadata={'type': 'minio'})
+    db.execute_queries(config_file, [dataSink.to_sql_query()])
 
 
     # create fake subject
@@ -123,14 +134,18 @@ def fake_data_fixture():
     SITE_ID = 'CP'
     SITE_NAME = 'test_CP'
     SUBJECT_ID = 'fake_subject'
+    DATASINK_NAME = 'fake_datasink_name'
 
     # Setup: Create fake records
-    create_fake_records(PROJECT_ID, PROJECT_NAME, SITE_ID, SITE_NAME, SUBJECT_ID)
+    create_fake_records(PROJECT_ID, PROJECT_NAME, SITE_ID,
+                        SITE_NAME, SUBJECT_ID, DATASINK_NAME)
 
-    yield PROJECT_ID, PROJECT_NAME, SITE_ID, SITE_NAME, SUBJECT_ID
+    yield PROJECT_ID, PROJECT_NAME, SITE_ID, \
+            SITE_NAME, SUBJECT_ID, DATASINK_NAME
 
     # Teardown: Delete fake records
-    delete_fake_records(PROJECT_ID, PROJECT_NAME, SITE_ID, SITE_NAME, SUBJECT_ID)
+    delete_fake_records(PROJECT_ID, PROJECT_NAME, SITE_ID,
+                        SITE_NAME, SUBJECT_ID, DATASINK_NAME)
 
 
 def test_pipeline_with_fake_data(fake_data_fixture):
@@ -149,7 +164,8 @@ def test_pipeline_with_fake_data(fake_data_fixture):
     assert True
 
 
-def delete_fake_records(project_id, project_name, site_id, site_name, subject_id):
+def delete_fake_records(project_id, project_name, site_id,
+                        site_name, subject_id, datasink_name):
     test_file = Path('test_file.zip')
 
     fileObj = File(
@@ -172,8 +188,7 @@ def delete_fake_records(project_id, project_name, site_id, site_name, subject_id
     os.remove(test_file)
 
 
-
-    # create fake data source
+    # delete fake data source
     dataSource = DataSource(
             data_source_name='main_redcap',
             is_active=True,
@@ -184,7 +199,7 @@ def delete_fake_records(project_id, project_name, site_id, site_name, subject_id
             )
     db.execute_queries(config_file, [dataSource.delete_record_query()])
 
-    # create fake subject
+    # delete fake subject
     subject = Subject(
         subject_id=subject_id,
         site_id=site_id,
@@ -192,8 +207,14 @@ def delete_fake_records(project_id, project_name, site_id, site_name, subject_id
         subject_metadata={'testing': True})
     db.execute_queries(config_file, [subject.delete_record_query()])
 
+    # delete fake site
+    # delete fake datasink
+    dataSink = DataSink(
+            data_sink_name='test_minio_data_sink',
+            site_id=site_id,
+            project_id=project_id,
+            data_sink_metadata={'type': 'minio'})
 
-    # create fake site
     site = Site(
             site_id=site_id,
             site_name=site_name,
@@ -201,10 +222,12 @@ def delete_fake_records(project_id, project_name, site_id, site_name, subject_id
             site_is_active=True,
             site_metadata={'testing': True}
             )
+    db.execute_queries(config_file, [dataSink.delete_record_query()])
     db.execute_queries(config_file, [site.delete_record_query()])
 
+
     redcap_cred = config.parse(config_file, 'redcap-test')
-    # create key store
+    # delete key store
     keystore = KeyStore(
             key_name=redcap_cred['key_name'],
             key_value=redcap_cred['key_value'],
@@ -215,7 +238,7 @@ def delete_fake_records(project_id, project_name, site_id, site_name, subject_id
                        [keystore.delete_record_query()])
 
     minio_cred = config.parse(config_file, 'datasink-test')
-    # create key store
+    # delete key store
     keystore = KeyStore(
             key_name=minio_cred['key_name'],
             key_value=minio_cred['key_value'],
@@ -225,7 +248,7 @@ def delete_fake_records(project_id, project_name, site_id, site_name, subject_id
     db.execute_queries(config_file,
                        [keystore.delete_record_query()])
 
-    # create fake project
+    # delete fake project
     project = Project(
             project_id=project_id,
             project_name=project_name,
@@ -249,7 +272,9 @@ if __name__ == '__main__':
                         help='The site name.')
     parser.add_argument('--subject_id', type=str, default='fake_subject',
                         help='The subject ID.')
+    parser.add_argument('--datasink_name', type=str, default='fake_datasink_name',
+                        help='The datasink name.')
     args = parser.parse_args()
 
     create_fake_records(args.project_id, args.project_name, args.site_id,
-                        args.site_name, args.subject_id)
+                        args.site_name, args.subject_id, args.datasink_name)
