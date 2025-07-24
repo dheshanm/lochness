@@ -78,6 +78,7 @@ fileObj = File(
         with_hash=True)
 db.execute_queries(config_file, [fileObj.to_sql_query()])
 
+
 dataPull = DataPull(
     subject_id=SUBJECT_ID,
     data_source_name='main_redcap',
@@ -88,3 +89,4 @@ dataPull = DataPull(
     pull_time_s=1,
     pull_metadata={'test': True})
 db.execute_queries(config_file, [dataPull.to_sql_query()])
+
