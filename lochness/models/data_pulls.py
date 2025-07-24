@@ -89,3 +89,14 @@ class DataPull(BaseModel):
                 '{file_path}', '{file_md5}', {pull_time_s}, '{pull_metadata}');
         """
         return sql_query
+
+    def delete_record_query(self) -> str:
+        """Generate a query to delete a record from the table"""
+        query = f"""DELETE FROM data_pull
+        WHERE subject_id = '{self.subject_id}'
+          AND data_source_name = '{self.data_source_name}'
+          AND project_id = '{self.project_id}'
+          AND site_id = '{self.site_id}'
+          AND file_path = '{self.file_path}'
+          AND file_md5 = '{self.file_md5}';"""
+        return query

@@ -80,3 +80,10 @@ class Site(BaseModel):
         """
 
         return sql_query
+
+    def delete_record_query(self) -> str:
+        """Generate a query to delete a record from the table"""
+        query = f"""DELETE FROM sites
+        WHERE site_id = '{self.site_id}'
+          AND project_id = '{self.project_id}';"""
+        return query
