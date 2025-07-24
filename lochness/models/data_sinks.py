@@ -117,7 +117,7 @@ class DataSink(BaseModel):
                                site_id: str,
                                project_id: str,
                                active_only: bool = False,
-                               ) -> "DataSink":
+                               ) -> DataSink:
         """
         Retrieves the matching data sink
 
