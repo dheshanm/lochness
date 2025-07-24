@@ -176,3 +176,10 @@ class File:
                     },
                 ).insert(config_file)
         return files_to_push
+
+    def delete_record_query(self) -> str:
+        """Generate a query to delete a record from the table"""
+        query = f"""DELETE FROM files
+        WHERE file_path = '{self.file_path}'
+          AND file_md5 = '{self.md5}';"""
+        return query

@@ -115,3 +115,9 @@ class Subject(BaseModel):
             )
             subjects.append(subject)
         return subjects
+
+    def delete_record_query(self) -> str:
+        """Generate a query to delete a record from the table"""
+        query = f"""DELETE FROM subjects
+        WHERE subject_id = '{self.subject_id}';"""
+        return query

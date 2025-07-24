@@ -80,3 +80,11 @@ class DataSource(BaseModel):
         """
 
         return sql_query
+
+    def delete_record_query(self) -> str:
+        """Generate a query to delete a record from the table"""
+        query = f"""DELETE FROM data_sources
+        WHERE data_source_name = '{self.data_source_name}'
+          AND project_id = '{self.project_id}'
+          AND site_id = '{self.site_id}';"""
+        return query
