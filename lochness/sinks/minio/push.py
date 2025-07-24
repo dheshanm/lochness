@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import Any, Dict
 
@@ -9,6 +10,8 @@ from lochness.models.keystore import KeyStore
 from lochness.helpers import db
 from lochness.models.logs import Logs # Added Logs model
 
+
+logger = logging.getLogger(__name__)
 
 def push_file(file_path: Path,
               data_sink: DataSink,
@@ -37,6 +40,7 @@ def push_file(file_path: Path,
     if not all([endpoint, bucket_name, keystore_name]):
         msg = f"Missing MinIO configuration (endpoint, bucket_name, or " \
               f"keystore_name) for sink {data_sink.data_sink_name}"
+        logger.error(msg)
         Logs(log_level="ERROR",
              log_message={
                  "event": "minio_push_config_error",
@@ -49,23 +53,22 @@ def push_file(file_path: Path,
     # Retrieve access_key and secret_key from KeyStore
     query_access_key = KeyStore.retrieve_key_query(keystore_name,
                                                    data_sink.project_id,
-                                                   encryption_passphrase,
-                                                   key_name="access_key")
-    access_key_df = db.execute_sql(config_file, query_access_key)
-    access_key = access_key_df['key_value'][0] if not access_key_df.empty \
+                                                   encryption_passphrase)
+    key_df = db.execute_sql(config_file, query_access_key)
+    secret_key = key_df['key_value'][0] if not key_df.empty \
             else None
 
-    query_secret_key = KeyStore.retrieve_key_query(keystore_name,
-                                                   data_sink.project_id,
-                                                   encryption_passphrase,
-                                                   key_name="secret_key")
-    secret_key_df = db.execute_sql(config_file, query_secret_key)
-    secret_key = secret_key_df['key_value'][0] if not secret_key_df.empty \
+    query_metadata = KeyStore.retrieve_key_metadata(keystore_name,
+                                                    data_sink.project_id)
+    key_metadata = db.execute_sql(config_file, query_metadata)
+    access_key = key_metadata.iloc[0]['key_metadata']['access_key'] if not {} \
             else None
+
 
     if not all([access_key, secret_key]):
         msg = "Missing MinIO credentials (access_key or secret_key) in " \
               f"KeyStore for sink {data_sink.data_sink_name}"
+        logger.error(msg)
         Logs(log_level="ERROR",
              log_message={
                  "event": "minio_push_credential_error",
@@ -77,11 +80,12 @@ def push_file(file_path: Path,
         return False
 
     try:
+        endpoint = 'pnl-minio-1.partners.org:9000'
         client = Minio(
-            endpoint,
+            endpoint.replace("http://", "").replace("https://", ""),
             access_key=access_key,
             secret_key=secret_key,
-            secure=secure
+            secure=endpoint.startswith("https")
         )
 
         # Ensure the bucket exists
@@ -124,8 +128,9 @@ def push_file(file_path: Path,
         return True
 
     except S3Error as e:
-        mgs = f"MinIO S3 Error pushing {file_path.name} to " \
+        msg = f"MinIO S3 Error pushing {file_path.name} to " \
               f"{data_sink.data_sink_name}: {e}"
+        logger.error(msg)
         Logs(log_level="ERROR",
              log_message={
                  "event": "minio_s3_error",
@@ -134,9 +139,11 @@ def push_file(file_path: Path,
                  "data_sink_name": data_sink.data_sink_name,
                  "error": str(e)}).insert(config_file)
         return False
+
     except Exception as e:
         msg = f"Unexpected error pushing {file_path.name} to " \
               f"{data_sink.data_sink_name}: {e}"
+        logger.error(msg)
         Logs(log_level="ERROR",
              log_message={
                  "event": "minio_push_unexpected_error",

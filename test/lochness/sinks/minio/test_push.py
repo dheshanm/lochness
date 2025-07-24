@@ -48,9 +48,8 @@ def test_push_file(fake_data_fixture):
             test_file,
             dataSink,
             config_file,
-            {
-                'data_source_name': 'redcap_test',
-                'subject_id': SUBJECT_ID,
+            {'data_source_name': 'redcap_test',
+             'subject_id': SUBJECT_ID,
              },
             encryption_passphrase)
     assert result

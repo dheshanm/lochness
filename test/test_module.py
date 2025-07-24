@@ -20,6 +20,7 @@ from lochness.models.data_sinks import DataSink
 from lochness.models.subjects import Subject
 from lochness.models.data_source import DataSource
 from lochness.models.data_pulls import DataPull
+from lochness.models.data_push import DataPush
 from lochness.models.files import File
 from lochness.helpers import logs, utils, db, config
 
@@ -58,7 +59,9 @@ def create_fake_records(project_id, project_name, site_id,
             key_value=minio_cred['key_value'],
             key_type=minio_cred['key_type'],
             project_id=project_id,
-            key_metadata={})
+            key_metadata={
+                'access_key': 'lochness-dev'
+                })
     db.execute_queries(config_file,
                        [keystore.to_sql_query(encryption_passphrase)])
 
@@ -76,10 +79,18 @@ def create_fake_records(project_id, project_name, site_id,
 
     # create fake datasink
     dataSink = DataSink(
-            data_sink_name='test_minio_data_sink',
+            data_sink_name=datasink_name,
             site_id=site_id,
             project_id=project_id,
-            data_sink_metadata={'type': 'minio'})
+            data_sink_metadata={
+                'type': 'minio',
+                'endpoint': minio_cred['endpoint'],
+                'bucket_name': minio_cred['bucket_name'],
+                'secure': True,
+                'keystore_name': minio_cred['key_name'],
+                'active': True,
+                })
+
     db.execute_queries(config_file, [dataSink.to_sql_query()])
 
 
@@ -143,7 +154,9 @@ def fake_data_fixture():
     yield PROJECT_ID, PROJECT_NAME, SITE_ID, \
             SITE_NAME, SUBJECT_ID, DATASINK_NAME
 
-    # Teardown: Delete fake records
+
+
+    # # Teardown: Delete fake records
     delete_fake_records(PROJECT_ID, PROJECT_NAME, SITE_ID,
                         SITE_NAME, SUBJECT_ID, DATASINK_NAME)
 
@@ -172,6 +185,14 @@ def delete_fake_records(project_id, project_name, site_id,
             file_path=test_file,
             with_hash=True)
 
+    # delete fake datasink
+    dataSink = DataSink(
+            data_sink_name=datasink_name,
+            site_id=site_id,
+            project_id=project_id,
+            data_sink_metadata={'type': 'minio'})
+    data_sink_id = dataSink.get_data_sink_id(config_file)
+
     dataPull = DataPull(
         subject_id=subject_id,
         data_source_name='main_redcap',
@@ -184,8 +205,21 @@ def delete_fake_records(project_id, project_name, site_id,
     db.execute_queries(config_file, [dataPull.delete_record_query()])
 
 
-    db.execute_queries(config_file, [fileObj.delete_record_query()])
+    dataPush = DataPush(
+            data_sink_id=data_sink_id,
+            file_path=str(test_file),
+            file_md5=fileObj.md5,
+            push_time_s=1,
+            push_metadata={'test': True},
+            push_timestamp=datetime.now().isoformat()
+            )
+
+    db.execute_queries(config_file, [
+        dataPush.delete_record_query(data_sink_id)])
+
     os.remove(test_file)
+    db.execute_queries(config_file, [
+        fileObj.delete_record_query()])
 
 
     # delete fake data source
@@ -208,12 +242,6 @@ def delete_fake_records(project_id, project_name, site_id,
     db.execute_queries(config_file, [subject.delete_record_query()])
 
     # delete fake site
-    # delete fake datasink
-    dataSink = DataSink(
-            data_sink_name='test_minio_data_sink',
-            site_id=site_id,
-            project_id=project_id,
-            data_sink_metadata={'type': 'minio'})
 
     site = Site(
             site_id=site_id,

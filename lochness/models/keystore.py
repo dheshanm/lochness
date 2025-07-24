@@ -96,6 +96,19 @@ class KeyStore(BaseModel):
         return sql
 
     @staticmethod
+    def retrieve_key_metadata(key_name: str, project_id: str) -> dict:
+        """
+        Returns the SQL query to retrieve a key from the database for a specific project.
+        """
+        sql = f"""
+            SELECT key_metadata
+            FROM key_store
+            WHERE key_name = '{key_name}'
+              AND project_id = '{project_id}';
+        """
+        return sql
+
+    @staticmethod
     def get_by_name_and_project(
         config_file: Path, key_name: str, project_id: str, encryption_passphrase: str
     ) -> Optional["KeyStore"]:

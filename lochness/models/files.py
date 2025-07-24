@@ -121,11 +121,26 @@ class File:
         return sql_query
 
     @staticmethod
-    def get_all_files_in_df(config_file: Path) -> pd.DataFrame:
+    def get_all_files_in_df(
+            config_file: Path,
+            project_id: str,
+            site_id: str) -> pd.DataFrame:
         """
         Return the files to push for a given project and site.
         """
-        sql_query = "SELECT * FROM files"""
+        sql_query = f"""SELECT DISTINCT 
+          data_pull.project_id,
+          data_pull.site_id,
+          data_pull.subject_id,
+          data_pull.data_source_name,
+          files.*
+        FROM files
+        JOIN data_pull on data_pull.file_path = files.file_path AND
+          data_pull.file_md5 = files.file_md5
+        WHERE data_pull.project_id = '{project_id}'
+          AND data_pull.site_id = '{site_id}'
+        """
+
         sql_query = db.handle_null(sql_query)
         files_df = db.execute_sql(config_file, sql_query)
 
@@ -147,11 +162,16 @@ class File:
         return files_df
     
     @staticmethod
-    def get_files_to_push(config_file: Path) -> list['File']:
+    def get_files_to_push(
+            config_file: Path,
+            project_id: str,
+            site_id: str) -> list['File']:
         """
         Return the files to push for a given project and site.
         """
-        files_df = File.get_all_files_in_df(config_file)
+        files_df = File.get_all_files_in_df(config_file,
+                                            project_id,
+                                            site_id)
         files_to_push = []
         for _, row in files_df.iterrows():
             try:
@@ -160,12 +180,13 @@ class File:
                 file_obj = File(file_path=file_path, with_hash=False)
                 file_obj.md5 = file_md5
 
-                # extra
                 file_obj.data_source_name = row["data_source_name"]
-                file_obj.subject_id = row["subject_id"]
-                file_obj.site_id = row["site_id"]
                 file_obj.project_id = row["project_id"]
+                file_obj.site_id = row["site_id"]
+                file_obj.subject_id = row["subject_id"]
+
                 files_to_push.append(file_obj)
+
             except FileNotFoundError:
                 Logs(
                     log_level="WARN",

@@ -28,7 +28,7 @@ except ValueError:
 from lochness.helpers import logs, utils, db, config
 from lochness.models.data_sinks import DataSink
 from lochness.models.files import File
-from lochness.models.data_pushes import DataPush
+from lochness.models.data_push import DataPush
 from lochness.models.logs import Logs
 
 MODULE_NAME = "lochness.tasks.push_data"
@@ -46,6 +46,10 @@ logging.basicConfig(**logargs)
 
 def push_file_to_sink(file_obj: File,
                       dataSink: DataSink,
+                      data_source_name: str,
+                      project_id: str,
+                      site_id: str,
+                      subject_id: str,
                       config_file: Path,
                       encryption_passphrase: str) -> bool:
     """
@@ -53,6 +57,7 @@ def push_file_to_sink(file_obj: File,
     Only pushes if the file (by path and md5) has not already been
     pushed to this sink.
     """
+    data_sink_id = dataSink.get_data_sink_id(config_file)
     sink_type = dataSink.data_sink_metadata.get("type")
     if not sink_type:
         msg = f"Data sink {dataSink.data_sink_name} " \
@@ -100,10 +105,10 @@ def push_file_to_sink(file_obj: File,
             data_sink=dataSink,
             config_file=config_file,
             push_metadata={
-                "data_source_name": file_obj.data_source_name,
-                "subject_id": file_obj.subject_id,
-                "site_id": file_obj.site_id,
-                "project_id": file_obj.project_id,
+                "data_source_name": data_source_name,
+                "subject_id": subject_id,
+                "site_id": site_id,
+                "project_id": project_id,
                 "file_name": file_obj.file_name,
                 "file_size_mb": file_obj.file_size_mb,
             },
@@ -117,17 +122,20 @@ def push_file_to_sink(file_obj: File,
             data_push = DataPush(
                 file_path=str(file_obj.file_path),
                 file_md5=file_obj.md5,
-                data_sink_name=dataSink.data_sink_name,
+                data_sink_id=data_sink_id,
                 site_id=dataSink.site_id,
                 project_id=dataSink.project_id,
                 push_time_s=push_time_s,
+                push_timestamp=datetime.now().isoformat(),
                 push_metadata={
                     "sink_type": sink_type,
                     "file_size_mb": file_obj.file_size_mb,
                     "destination_path": "TODO: Get actual destination path from sink handler",
                 },
             )
-            data_push.insert(config_file)
+            db.execute_queries(config_file,
+                               [data_push.to_sql_query()],
+                               show_commands=False)
 
             Logs(
                 log_level="INFO",
@@ -240,7 +248,10 @@ def push_all_data(config_file: Path,
     if active_data_sinks == []:
         return
     
-    files_to_push = File.get_files_to_push(config_file)
+    files_to_push = File.get_files_to_push(
+            config_file,
+            project_id,
+            site_id)
     if files_to_push == []:
         logger.info("No files found to push.")
         Logs(log_level="INFO",
@@ -270,6 +281,10 @@ def push_all_data(config_file: Path,
             push_file_to_sink(
                     file_obj=file_obj,
                     dataSink=dataSink,
+                    data_source_name=file_obj.data_source_name,
+                    project_id=file_obj.project_id,
+                    site_id=file_obj.site_id,
+                    subject_id=file_obj.subject_id,
                     config_file=config_file,
                     encryption_passphrase=encryption_passphrase,
             )

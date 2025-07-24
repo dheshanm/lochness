@@ -132,15 +132,14 @@ class DataSink(BaseModel):
             List[DataSink]: A list of DataSink objects.
         """
 
-
         query = f"""SELECT data_sink_name, site_id, project_id, data_sink_metadata
         FROM data_sinks
-        WHERE data_sink_name = '{data_sink_name}'
-            AND site_id = '{site_id}'
-            AND project_id = '{project_id}'
+        WHERE
+          data_sink_name = '{data_sink_name}'
+          AND site_id = '{site_id}'
+          AND project_id = '{project_id}'
         LIMIT 1;
         """
-        query = "SELECT data_sink_name, site_id, project_id, data_sink_metadata FROM data_sinks;"
         data_sinks_df = db.execute_sql(config_file, query)
         row = data_sinks_df.iloc[0]
         data_sink = DataSink(
@@ -157,20 +156,29 @@ class DataSink(BaseModel):
         return data_sink
 
 
+    def get_data_sink_id(self, config_file):
+        query = f"""
+            SELECT data_sink_id FROM data_sinks
+            WHERE
+              data_sink_name = '{self.data_sink_name}'
+              AND site_id = '{self.site_id}'
+              AND project_id = '{self.project_id}'
+            LIMIT 1;
+            """
+        data_sink_id = db.execute_sql(config_file, query)
+        return data_sink_id.iloc[0]['data_sink_id']
+
     def is_file_already_pushed(self,
                                config_file: Path,
                                file_path: Path,
                                md5: str) -> bool:
+        data_sink_id = self.get_data_sink_id(config_file)
         query = f"""
             SELECT 1 FROM data_push
-            LEFT JOIN data_sinks on
-              data_sinks.data_sink_id = data_push.data_sink_id
             WHERE
-              data_sinks.data_sink_name = {self.data_sink_name}
-              AND data_sinks.site_id = {self.site_id}
-              AND data_sinks.project_id = {self.project_id}
-              AND data_push.file_path = '{file_path}'
-              AND data_push.file_md5 = '{md5}'
+              data_sink_id = {data_sink_id}
+              AND file_path = '{file_path}'
+              AND file_md5 = '{md5}'
             LIMIT 1;
             """
         push_exists = db.execute_sql(config_file, query)
