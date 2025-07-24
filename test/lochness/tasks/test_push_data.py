@@ -12,14 +12,37 @@ for parent in file.parents:
     if parent.name == "lochness_v2":
         root_dir = parent
 
-print(root_dir)
 sys.path.append(str(root_dir))
 sys.path.append(str(root_dir / 'test'))
 
-from lochness.tasks.push_data import push_all_data
+from lochness.models.files import File
+from lochness.models.data_sinks import DataSink
+from lochness.tasks.push_data import (
+        push_file_to_sink,
+        push_all_data,
+        get_matching_dataSink_list
+        )
+from lochness.helpers import logs, utils, db, config
 from test_module import fake_data_fixture, config_file
 
 
-def test_example(fake_data_fixture):
-    PROJECT_ID, PROJECT_NAME, SITE_ID, SITE_NAME, SUBJECT_ID = fake_data_fixture
+def test_push_file_to_sink(fake_data_fixture):
+    PROJECT_ID, PROJECT_NAME, SITE_ID, \
+            SITE_NAME, SUBJECT_ID, DATASINK_NAME = fake_data_fixture
+    test_file = Path('test_file.zip')
+    file_obj = File(file_path=test_file, with_hash=True)
+    dataSink = DataSink(
+            data_sink_name=DATASINK_NAME,
+            site_id=SITE_ID,
+            project_id=PROJECT_ID,
+            data_sink_metadata={})
+    config_file = utils.get_config_file_path()
+    encryption_passphrase = config.parse(config_file, 'general')[
+            'encryption_passphrase']
+    push_file_to_sink(file_obj, dataSink, config_file, encryption_passphrase)
+
+
+def test_push_all_data(fake_data_fixture):
+    PROJECT_ID, PROJECT_NAME, SITE_ID, \
+            SITE_NAME, SUBJECT_ID, DATASINK_NAME = fake_data_fixture
     push_all_data(config_file, PROJECT_ID, SITE_ID)
