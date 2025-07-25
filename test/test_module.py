@@ -6,6 +6,19 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+for x in sys.path:
+    if 'lochness' in x:
+        sys.path.remove(x)
+
+file = Path(__file__).resolve()
+parent = file.parent
+root_dir = None
+for parent in file.parents:
+    if parent.name == "lochness_v2":
+        root_dir = parent
+
+sys.path.append(str(root_dir))
+sys.path.append(str(root_dir / 'test'))
 
 # Get the project root directory
 project_root = Path(__file__).resolve().parent.parent
@@ -110,7 +123,12 @@ def create_fake_records(project_id, project_name, site_id,
             site_id=site_id,
             project_id=project_id,
             data_source_type='redcap',
-            data_source_metadata={'testing': True}
+            data_source_metadata={
+                'testing': True,
+                'keystore_name': redcap_cred['key_name'],
+                'endpoint_url': redcap_cred['endpoint_url'],
+                'subject_id_variable': redcap_cred['subject_id_variable'],
+                }
             )
     db.execute_queries(config_file, [dataSource.to_sql_query()])
 
@@ -233,16 +251,14 @@ def delete_fake_records(project_id, project_name, site_id,
             )
     db.execute_queries(config_file, [dataSource.delete_record_query()])
 
-    # delete fake subject
-    subject = Subject(
-        subject_id=subject_id,
-        site_id=site_id,
-        project_id=project_id,
-        subject_metadata={'testing': True})
-    db.execute_queries(config_file, [subject.delete_record_query()])
+    # delete subjects for the test project_id and test site_id
+    subject_obj_list = Subject.get_subjects_for_project_site(
+            project_id, site_id, config_file)
+    for subject in subject_obj_list:
+        db.execute_queries(config_file,
+                           [subject.delete_record_query()])
 
     # delete fake site
-
     site = Site(
             site_id=site_id,
             site_name=site_name,
