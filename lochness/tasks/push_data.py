@@ -29,6 +29,7 @@ from lochness.helpers import logs, utils, db, config
 from lochness.models.data_sinks import DataSink
 from lochness.models.files import File
 from lochness.models.data_push import DataPush
+from lochness.models.data_pulls import DataPull
 from lochness.models.logs import Logs
 
 MODULE_NAME = "lochness.tasks.push_data"
@@ -45,6 +46,7 @@ logging.basicConfig(**logargs)
 
 
 def push_file_to_sink(file_obj: File,
+                      modality: str,
                       dataSink: DataSink,
                       data_source_name: str,
                       project_id: str,
@@ -111,6 +113,7 @@ def push_file_to_sink(file_obj: File,
                 "project_id": project_id,
                 "file_name": file_obj.file_name,
                 "file_size_mb": file_obj.file_size_mb,
+                "modality": modality
             },
             encryption_passphrase=encryption_passphrase,
         )
@@ -190,6 +193,51 @@ def push_file_to_sink(file_obj: File,
             },
         ).insert(config_file)
         return False
+
+
+def simple_push_file_to_sink(file_path: Path):
+    """
+    Push a file to the appropriate data sink.
+
+    This function retrieves the most recent file object and data pull related
+    to the specified file path from the configuration file. It then identifies
+    the matching data sink for the project's site, encrypts the file using the
+    passphrase from the configuration, and pushes the file to the data sink.
+
+    Parameters:
+    - file_path (Path): The path of the file.
+
+    Returns:
+    - result: The result of the push operation, indicating success or failure.
+    """
+
+    config_file = utils.get_config_file_path()
+
+    file_obj = File.get_most_recent_file_obj(config_file, file_path)
+
+    dataPull = DataPull.get_most_recent_data_pull(config_file,
+                                                  file_obj.file_path,
+                                                  file_obj.md5)
+
+    dataSink = DataSink.get_matching_data_sink(
+            config_file=config_file,
+            site_id=dataPull.site_id,
+            project_id=dataPull.project_id
+            )
+
+    encryption_passphrase = config.parse(config_file, 'general')[
+            'encryption_passphrase']
+    
+    result = push_file_to_sink(file_obj=file_obj,
+                               modality=file_obj.modality,
+                               dataSink=dataSink,
+                               data_source_name='main_redcap',
+                               project_id=dataPull.project_id,
+                               site_id=dataPull.site_id,
+                               subject_id=dataPull.subject_id,
+                               config_file=config_file,
+                               encryption_passphrase=encryption_passphrase)
+    return result
 
 
 def get_matching_dataSink_list(config_file: Path, project_id: str, site_id: str) -> List[DataSink]:
@@ -280,6 +328,7 @@ def push_all_data(config_file: Path,
                         f"{dataSink.data_sink_name}...")
             push_file_to_sink(
                     file_obj=file_obj,
+                    modality=file_obj.modality,
                     dataSink=dataSink,
                     data_source_name=file_obj.data_source_name,
                     project_id=file_obj.project_id,
