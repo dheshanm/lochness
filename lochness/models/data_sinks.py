@@ -113,10 +113,10 @@ class DataSink(BaseModel):
 
     @staticmethod
     def get_matching_data_sink(config_file: Path,
-                               data_sink_name: str,
                                site_id: str,
                                project_id: str,
                                active_only: bool = False,
+                               data_sink_name: str = None,
                                ) -> "DataSink":
         """
         Retrieves the matching data sink
@@ -132,14 +132,22 @@ class DataSink(BaseModel):
             List[DataSink]: A list of DataSink objects.
         """
 
-        query = f"""SELECT data_sink_name, site_id, project_id, data_sink_metadata
-        FROM data_sinks
-        WHERE
-          data_sink_name = '{data_sink_name}'
-          AND site_id = '{site_id}'
-          AND project_id = '{project_id}'
-        LIMIT 1;
-        """
+        if data_sink_name:
+            query = f"""SELECT data_sink_name, site_id,
+              project_id, data_sink_metadata
+            FROM data_sinks
+            WHERE data_sink_name = '{data_sink_name}'
+              AND site_id = '{site_id}'
+              AND project_id = '{project_id}'
+            LIMIT 1;
+            """
+        else:
+            query = f"""SELECT data_sink_name, site_id,
+              project_id, data_sink_metadata
+            FROM data_sinks
+            WHERE site_id = '{site_id}' AND project_id = '{project_id}'
+            LIMIT 1;
+            """
         data_sinks_df = db.execute_sql(config_file, query)
         row = data_sinks_df.iloc[0]
         data_sink = DataSink(
@@ -181,11 +189,12 @@ class DataSink(BaseModel):
               AND file_md5 = '{md5}'
             LIMIT 1;
             """
-        push_exists = db.execute_sql(config_file, query)
-        if not push_exists.empty:
+        push_exists = len(db.execute_sql(config_file, query)) > 0
+        if not push_exists:
             return False
         else:
             return True
+
 
     def delete_record_query(self) -> str:
         """Generate a query to delete a record from the table"""

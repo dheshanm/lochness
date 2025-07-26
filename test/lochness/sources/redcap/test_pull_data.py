@@ -118,10 +118,11 @@ def test_save_subject_data(prod_data_fixture):
     assert file_path.is_file()
 
 
-def test_pull_all_data(prod_data_fixture):
+def test_pull_and_push_single_data(prod_data_fixture):
     PROJECT_ID, PROJECT_NAME, SITE_ID, \
             SITE_NAME, SUBJECT_ID, DATASINK_NAME = prod_data_fixture
     config_file = utils.get_config_file_path()
+
     refresh_all_metadata(config_file, PROJECT_ID, SITE_ID)
 
     pull_all_data(config_file=config_file,

@@ -102,9 +102,14 @@ def push_file(file_path: Path,
         # Determine object name (path within the bucket)
         # For simplicity, let's use a path similar to the local storage structure
         # e.g., <project_id>/<site_id>/<data_source_name>/<subject_id>/<filename>
-        object_name = f"{data_sink.project_id}/{data_sink.site_id}/" \
-                      f"{push_metadata.get('data_source_name', 'unknown')}/" \
+
+        project_name_cap = data_sink.project_id[:1].upper() + \
+                data_sink.project_id[1:].lower()
+
+        object_name = f"{project_name_cap}/PHOENIX/PROTECTED/" \
+                      f"{project_name_cap}{data_sink.site_id}/raw/" \
                       f"{push_metadata.get('subject_id', 'unknown')}/" \
+                      f"{push_metadata.get('modality', 'unknown')}/" \
                       f"{file_path.name}"
 
         client.fput_object(

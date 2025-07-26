@@ -26,6 +26,7 @@ from lochness.models.files import File
 from lochness.models.data_pulls import DataPull
 from lochness.models.data_push import DataPush
 from lochness.models.data_sinks import DataSink
+from lochness.tasks.push_data import simple_push_file_to_sink
 from lochness.sources.redcap.models.data_source import RedcapDataSource
 
 MODULE_NAME = "lochness.sources.redcap.tasks.pull_data"
@@ -91,6 +92,7 @@ def fetch_subject_data(
         r = requests.post(redcap_endpoint_url, data=data, timeout=timeout_s)
         r.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
         return r.content
+
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to fetch data for {identifier}: {e}")
         Logs(
@@ -460,7 +462,11 @@ def push_to_minio_sink(
         return None
 
 
-def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None, push_to_sink: bool = False):
+def pull_all_data(config_file: Path,
+                  project_id: str = None,
+                  site_id: str = None,
+                  subject_id_list: list = None,
+                  push_to_sink: bool = False):
     """
     Main function to pull data for all active REDCap data sources and subjects.
     """
@@ -522,6 +528,10 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
             site_id=redcap_data_source.site_id,
             config_file=config_file
         )
+
+        if subject_id_list:
+            subjects_in_db = [x for x in subjects_in_db
+                              if x.subject_id in subject_id_list]
 
         if not subjects_in_db:
             logger.info(f"No subjects found for {redcap_data_source.project_id}::{redcap_data_source.site_id}.")
@@ -589,13 +599,8 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
 
                     # Push to data sink if requested
                     if push_to_sink:
-                        push_to_data_sink(
-                            file_path=file_path,
-                            file_md5=file_md5,
-                            project_id=subject.project_id,
-                            site_id=subject.site_id,
-                            config_file=config_file,
-                        )
+                        logger.info(f"Pushing the file to sink")
+                        simple_push_file_to_sink(str(file_path))
 
 
 if __name__ == "__main__":

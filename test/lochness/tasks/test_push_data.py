@@ -17,10 +17,12 @@ sys.path.append(str(root_dir / 'test'))
 
 from lochness.models.files import File
 from lochness.models.data_sinks import DataSink
+from lochness.models.data_pulls import DataPull
 from lochness.tasks.push_data import (
         push_file_to_sink,
         push_all_data,
-        get_matching_dataSink_list
+        get_matching_dataSink_list,
+        simple_push_file_to_sink
         )
 from lochness.helpers import logs, utils, db, config
 from test_module import fake_data_fixture, config_file
@@ -44,6 +46,7 @@ def test_push_file_to_sink(fake_data_fixture):
             SITE_NAME, SUBJECT_ID, DATASINK_NAME = fake_data_fixture
     test_file = Path('test_file.zip')
     file_obj = File(file_path=test_file, with_hash=True)
+    file_obj.modality = 'surveys'
 
     config_file = utils.get_config_file_path()
     minio_cred = config.parse(config_file, 'datasink-test')
@@ -56,6 +59,7 @@ def test_push_file_to_sink(fake_data_fixture):
     encryption_passphrase = config.parse(config_file, 'general')[
             'encryption_passphrase']
     result = push_file_to_sink(file_obj=file_obj,
+                               modality=file_obj.modality,
                                dataSink=dataSink,
                                data_source_name='main_redcap',
                                project_id=PROJECT_ID,
@@ -64,6 +68,14 @@ def test_push_file_to_sink(fake_data_fixture):
                                config_file=config_file,
                                encryption_passphrase=encryption_passphrase)
     assert result
+
+
+def test_simple_push_file_to_sink(fake_data_fixture):
+    PROJECT_ID, PROJECT_NAME, SITE_ID, \
+            SITE_NAME, SUBJECT_ID, DATASINK_NAME = fake_data_fixture
+    test_file = Path('test_file.zip')
+
+    simple_push_file_to_sink(test_file)
 
 
 def test_push_all_data(fake_data_fixture):
