@@ -40,13 +40,14 @@ def test_fetch_metadata(fake_data_fixture):
     encryption_passphrase = config.parse(config_file, 'general')[
             'encryption_passphrase']
     redcap_cred = config.parse(config_file, 'redcap-test')
-    data_source_name = 'main_redcap'
+    data_source_name = redcap_cred['data_source_name']
 
     redcapDataSourceMetadata = RedcapDataSourceMetadata(
             keystore_name=redcap_cred['key_name'],
             endpoint_url=redcap_cred['endpoint_url'],
             subject_id_variable=redcap_cred['subject_id_variable'],
-            optional_variables_dictionary=[])
+            optional_variables_dictionary=[],
+            main_redcap=redcap_cred['main_redcap'])
 
     redcapDataSource = RedcapDataSource(
         data_source_name=data_source_name,
@@ -72,3 +73,32 @@ def test_refresh_all_metadata(fake_data_fixture):
     subject_obj_list = Subject.get_subjects_for_project_site(
             PROJECT_ID, SITE_ID, config_file)
     assert len(subject_obj_list) > 0
+
+
+def test_penncnb_redcap_fetch_metadata(fake_data_fixture):
+    PROJECT_ID, PROJECT_NAME, SITE_ID, \
+            SITE_NAME, SUBJECT_ID, DATASINK_NAME = fake_data_fixture
+
+    config_file = utils.get_config_file_path()
+    encryption_passphrase = config.parse(config_file, 'general')[
+            'encryption_passphrase']
+    redcap_penncnb_cred = config.parse(config_file, 'redcap-penncnb-test')
+    data_source_name = redcap_penncnb_cred['data_source_name']
+
+    redcapDataSourceMetadata = RedcapDataSourceMetadata(
+            keystore_name=redcap_penncnb_cred['key_name'],
+            endpoint_url=redcap_penncnb_cred['endpoint_url'],
+            optional_variables_dictionary=[],
+            main_redcap=redcap_penncnb_cred['main_redcap'])
+
+    redcapDataSource = RedcapDataSource(
+        data_source_name=data_source_name,
+        is_active=True,
+        site_id=SITE_ID,
+        project_id=PROJECT_ID,
+        data_source_type='redcap',
+        data_source_metadata=redcapDataSourceMetadata)
+
+    df = fetch_metadata(redcapDataSource, encryption_passphrase)
+    print(df)
+    assert len(df) > 0

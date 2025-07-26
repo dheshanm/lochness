@@ -44,7 +44,7 @@ def test_fetch_subject_data(prod_data_fixture):
     encryption_passphrase = config.parse(config_file, 'general')[
             'encryption_passphrase']
     redcap_cred = config.parse(config_file, 'redcap-test')
-    data_source_name = 'main_redcap'
+    data_source_name = redcap_cred['data_source_name']
 
     redcapDataSourceMetadata = RedcapDataSourceMetadata(
             keystore_name=redcap_cred['key_name'],
@@ -75,7 +75,7 @@ def test_save_subject_data(prod_data_fixture):
     encryption_passphrase = config.parse(config_file, 'general')[
             'encryption_passphrase']
     redcap_cred = config.parse(config_file, 'redcap-test')
-    data_source_name = 'main_redcap'
+    data_source_name = redcap_cred['data_source_name']
 
     redcapDataSourceMetadata = RedcapDataSourceMetadata(
             keystore_name=redcap_cred['key_name'],
@@ -136,7 +136,8 @@ def test_pull_and_push_single_data(prod_data_fixture):
             PROJECT_ID[1:].lower()
     outdir_root = Path(lochness_root) / project_name_cap
 
-    data_source_name = 'main_redcap'
+    redcap_cred = config.parse(config_file, 'redcap-test')
+    data_source_name = redcap_cred['data_source_name']
     output_dir = (outdir_root
         / "PHOENIX"
         / "PROTECTED"

@@ -93,6 +93,7 @@ class RedcapDataSource(BaseModel):
                         "subject_id_variable"
                     ],
                     optional_variables_dictionary=optional_variables,
+                    main_redcap=row["data_source_metadata"]["main_redcap"],
                 ),
             )
             return redcap_data_source
