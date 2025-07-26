@@ -228,6 +228,11 @@ def refresh_all_metadata(config_file: Path,
         active_only=True
     )
 
+    # make sure they have subject_id_variable in metadata
+    active_redcap_data_sources = [
+            ds for ds in active_redcap_data_sources
+            if ds.data_source_metadata.main_redcap == True)]
+
     # Filter by project_id and/or site_id if provided
     if project_id:
         active_redcap_data_sources = [ds for ds in active_redcap_data_sources
@@ -273,8 +278,6 @@ def refresh_all_metadata(config_file: Path,
                 "data_source_name": redcap_data_source.data_source_name,
             },
         ).insert(config_file)
-
-        # only from the main redcap
 
         source_metadata = fetch_metadata(
             redcap_data_source=redcap_data_source,

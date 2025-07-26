@@ -18,6 +18,7 @@ class RedcapDataSourceMetadata(BaseModel):
     keystore_name: str
     endpoint_url: str
     optional_variables_dictionary: List[Dict[str, str]]
+    main_redcap: bool = False
     subject_id_variable: Optional[str]
 
 
