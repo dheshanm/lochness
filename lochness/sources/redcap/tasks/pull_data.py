@@ -43,9 +43,43 @@ logging.basicConfig(**logargs)
 
 
 
-def build_query_dict_for_penncnb(subject_id: str,
-                                 subject_id_variable: str):
-    pass
+def add_filter_logic_for_penncnb_redcap(filter_logic: str,
+                                        subject_id: str,
+                                        subject_id_var: str):
+    """
+    Enhances the existing filter logic for fetching data from REDCap by adding 
+    conditions to handle subject IDs with various suffix patterns used in the 
+    PennCNB REDCap project.
+
+    This function appends additional logic to the provided filter logic string 
+    to accommodate different possible suffixes for subject IDs. These suffixes 
+    are used in REDCap to denote different sessions or versions of a subject's 
+    data.
+
+    Args:
+        filter_logic (str): The initial filter logic string to be enhanced.
+        subject_id (str): The subject ID for which data is being fetched.
+        subject_id_var (str): The variable name in REDCap that stores the 
+                              subject ID.
+
+    Returns:
+        str: The enhanced filter logic string with additional conditions 
+             included for handling various subject ID suffix patterns.
+    """
+    digits = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    digits_str = [str(x) for x in digits]
+    contains_logic = []
+    for subject_id in [subject_id, subject_id.lower()]:
+        contains_logic += [
+            f"contains([{subject_id_var}], '{subject_id}_{x}')"
+            for x in digits_str]
+        contains_logic += [
+            f"contains([{subject_id_var}], '{subject_id}={x}')"
+            for x in digits_str]
+
+    filter_logic += f"or {' or '.join(contains_logic)}"
+    return filter_logic
+
 
 def fetch_subject_data(
     redcap_data_source: RedcapDataSource,
@@ -83,15 +117,42 @@ def fetch_subject_data(
     api_token_df = db.execute_sql(config_file, query)
     api_token = api_token_df['key_value'][0]
 
-    data = {
-        "token": api_token,
-        "content": "record",
-        "action": "export",
-        "format": "json",  # Changed from 'csv' to 'json'
-        "type": "flat",
-        "returnFormat": "json",
-        "records[0]": subject_id, # Export data for this specific subject
-    }
+    if redcap_data_source.data_source_metadata.subject_id_variable_as_the_pk:
+        data = {
+            "token": api_token,
+            "content": "record",
+            "action": "export",
+            "format": "json",  # Changed from 'csv' to 'json'
+            "type": "flat",
+            "returnFormat": "json",
+            "records[0]": subject_id, # Export data for this specific subject
+        }
+    else:
+        subject_id_var = redcap_data_source.\
+                data_source_metadata.subject_id_variable
+        filter_logic = f"[{subject_id_var}] = '{subject_id}' or " \
+                f"[{subject_id_var}] = '{subject_id.lower()}'"
+
+        if redcap_data_source.\
+                data_source_metadata.messy_subject_id:
+            filter_logic = add_filter_logic_for_penncnb_redcap(
+                    filter_logic, subject_id, subject_id_var)
+
+        data = {
+            "token": api_token,
+            "content": "record",
+            "action": "export",
+            "format": "json",  # Changed from 'csv' to 'json'
+            "type": "flat",
+            "returnFormat": "json",
+            "csvDelimiter": "",
+            "rawOrLabel": "raw",
+            "rawOrLabelHeaders": "raw",
+            "exportCheckboxLabel": "false",
+            "exportSurveyFields": "false",
+            "exportDataAccessGroups": "false",
+            "filterLogic": filter_logic, # Export data for this specific subject
+        }
 
     try:
         r = requests.post(redcap_endpoint_url, data=data, timeout=timeout_s)
@@ -99,6 +160,7 @@ def fetch_subject_data(
         return r.content
 
     except requests.exceptions.RequestException as e:
+        logger.error(f"filter_logic: {filter_logic}")
         logger.error(f"Failed to fetch data for {identifier}: {e}")
         Logs(
             log_level="ERROR",

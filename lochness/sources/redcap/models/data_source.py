@@ -21,6 +21,7 @@ class RedcapDataSourceMetadata(BaseModel):
     main_redcap: bool = False
     subject_id_variable: Optional[str]
     subject_id_variable_as_the_pk: bool = True
+    messy_subject_id: bool = False
 
 
 class RedcapDataSource(BaseModel):

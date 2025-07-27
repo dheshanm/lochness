@@ -140,6 +140,10 @@ def create_fake_records(project_id, project_name, site_id,
                 'keystore_name': redcap_cred['key_name'],
                 'endpoint_url': redcap_cred['endpoint_url'],
                 'subject_id_variable': redcap_cred['subject_id_variable'],
+                'subject_id_variable_as_the_pk': 
+                    redcap_cred['subject_id_variable_as_the_pk'],
+                'messy_subject_id': 
+                    redcap_cred['messy_subject_id'],
                 'main_redcap': redcap_cred['main_redcap']
                 }
             )
@@ -158,6 +162,10 @@ def create_fake_records(project_id, project_name, site_id,
                 'keystore_name': redcap_penncnb_cred['key_name'],
                 'endpoint_url': redcap_penncnb_cred['endpoint_url'],
                 'subject_id_variable': redcap_penncnb_cred['subject_id_variable'],
+                'subject_id_variable_as_the_pk': 
+                    redcap_penncnb_cred['subject_id_variable_as_the_pk'],
+                'messy_subject_id': 
+                    redcap_penncnb_cred['messy_subject_id'],
                 'main_redcap': redcap_penncnb_cred['main_redcap']
                 })
     db.execute_queries(config_file, [dataSource.to_sql_query()])

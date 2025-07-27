@@ -75,13 +75,16 @@ def test_penncnb_fetch_subject_data(prod_data_fixture):
     config_file = utils.get_config_file_path()
     encryption_passphrase = config.parse(config_file, 'general')[
             'encryption_passphrase']
-    redcap_cred = config.parse(config_file, 'redcap-penncnb-test')
-    data_source_name = redcap_cred['data_source_name']
+    redcap_penncnb_cred = config.parse(config_file, 'redcap-penncnb-test')
+    data_source_name = redcap_penncnb_cred['data_source_name']
 
     redcapDataSourceMetadata = RedcapDataSourceMetadata(
-            keystore_name=redcap_cred['key_name'],
-            endpoint_url=redcap_cred['endpoint_url'],
-            subject_id_variable=redcap_cred['subject_id_variable'],
+            keystore_name=redcap_penncnb_cred['key_name'],
+            endpoint_url=redcap_penncnb_cred['endpoint_url'],
+            subject_id_variable=redcap_penncnb_cred['subject_id_variable'],
+            subject_id_variable_as_the_pk=
+                redcap_penncnb_cred['subject_id_variable_as_the_pk'],
+            messy_subject_id=redcap_penncnb_cred['messy_subject_id'],
             optional_variables_dictionary=[])
 
     redcapDataSource = RedcapDataSource(
