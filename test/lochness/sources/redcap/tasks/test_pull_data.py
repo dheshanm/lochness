@@ -67,6 +67,39 @@ def test_fetch_subject_data(prod_data_fixture):
 
     assert len(data) > 100
 
+
+def test_penncnb_fetch_subject_data(prod_data_fixture):
+    PROJECT_ID, PROJECT_NAME, SITE_ID, \
+            SITE_NAME, SUBJECT_ID, DATASINK_NAME = prod_data_fixture
+
+    config_file = utils.get_config_file_path()
+    encryption_passphrase = config.parse(config_file, 'general')[
+            'encryption_passphrase']
+    redcap_cred = config.parse(config_file, 'redcap-penncnb-test')
+    data_source_name = redcap_cred['data_source_name']
+
+    redcapDataSourceMetadata = RedcapDataSourceMetadata(
+            keystore_name=redcap_cred['key_name'],
+            endpoint_url=redcap_cred['endpoint_url'],
+            subject_id_variable=redcap_cred['subject_id_variable'],
+            optional_variables_dictionary=[])
+
+    redcapDataSource = RedcapDataSource(
+        data_source_name=data_source_name,
+        is_active=True,
+        site_id=SITE_ID,
+        project_id=PROJECT_ID,
+        data_source_type='redcap',
+        data_source_metadata=redcapDataSourceMetadata)
+
+    data = fetch_subject_data(
+            redcapDataSource,
+            SUBJECT_ID,
+            encryption_passphrase)
+
+    assert len(data) > 100
+
+
 def test_save_subject_data(prod_data_fixture):
     PROJECT_ID, PROJECT_NAME, SITE_ID, \
             SITE_NAME, SUBJECT_ID, DATASINK_NAME = prod_data_fixture

@@ -89,6 +89,7 @@ def test_penncnb_redcap_fetch_metadata(fake_data_fixture):
             keystore_name=redcap_penncnb_cred['key_name'],
             endpoint_url=redcap_penncnb_cred['endpoint_url'],
             optional_variables_dictionary=[],
+            subject_id_variable=redcap_penncnb_cred['subject_id_variable'],
             main_redcap=redcap_penncnb_cred['main_redcap'])
 
     redcapDataSource = RedcapDataSource(
@@ -100,5 +101,4 @@ def test_penncnb_redcap_fetch_metadata(fake_data_fixture):
         data_source_metadata=redcapDataSourceMetadata)
 
     df = fetch_metadata(redcapDataSource, encryption_passphrase)
-    print(df)
     assert len(df) > 0

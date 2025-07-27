@@ -42,6 +42,11 @@ logargs: Dict[str, Any] = {
 logging.basicConfig(**logargs)
 
 
+
+def build_query_dict_for_penncnb(subject_id: str,
+                                 subject_id_variable: str):
+    pass
+
 def fetch_subject_data(
     redcap_data_source: RedcapDataSource,
     subject_id: str,
