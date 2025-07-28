@@ -78,6 +78,14 @@ SUPPORTED_DATA_SOURCE_TYPES: List[SupportedDataSourceTypes] = [
             "project_id": "Mindlamp project ID",
         },
     ),
+    SupportedDataSourceTypes(
+        data_source_type="sharepoint",
+        data_source_metadata_dict={
+            "keystore_name": "Name of the keystore entry containing the API token",
+            "site_url": "Site URL",
+            "form_name": "Name of the Teams Form",
+        },
+    ),
 ]
 
 
