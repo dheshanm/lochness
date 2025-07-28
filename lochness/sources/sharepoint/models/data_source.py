@@ -3,7 +3,7 @@ Data Source Model for SharePoint
 """
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -18,6 +18,7 @@ class SharepointDataSourceMetadata(BaseModel):
     keystore_name: str
     site_url: str
     form_name: str
+    modality: Optional[str] = None
 
 
 class SharepointDataSource(BaseModel):
