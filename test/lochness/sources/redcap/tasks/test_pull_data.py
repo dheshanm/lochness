@@ -100,6 +100,7 @@ def test_penncnb_fetch_subject_data(prod_data_fixture):
             SUBJECT_ID,
             encryption_passphrase)
 
+    print(data)
     assert len(data) > 100
 
 

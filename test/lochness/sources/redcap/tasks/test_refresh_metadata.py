@@ -101,4 +101,5 @@ def test_penncnb_redcap_fetch_metadata(fake_data_fixture):
         data_source_metadata=redcapDataSourceMetadata)
 
     df = fetch_metadata(redcapDataSource, encryption_passphrase)
+    df.to_csv('tmp.csv')
     assert len(df) > 0
