@@ -86,6 +86,7 @@ def test_make_sharepoint_datasource_obj(prod_data_fixture):
             keystore_name=sharepoint_cred['key_name'],
             site_url=sharepoint_cred['site_url'],
             form_name=sharepoint_cred['form_name'],
+            modality=sharepoint_cred['modality'],
             )
 
     sharepointDataSource = SharepointDataSource(
@@ -109,6 +110,7 @@ def test_get_sharepoint_datasource_obj_from_db(prod_data_fixture):
             keystore_name=sharepoint_cred['key_name'],
             site_url=sharepoint_cred['site_url'],
             form_name=sharepoint_cred['form_name'],
+            modality=sharepoint_cred['modality'],
             )
 
     sharepointDataSource = SharepointDataSource(
@@ -139,6 +141,7 @@ def test_fetch_subject_data(prod_data_fixture):
     encryption_passphrase = config.parse(config_file, 'general')[
             'encryption_passphrase']
     PROJECT_ID, PROJECT_NAME, SITE_ID, SITE_NAME, SUBJECT_ID, DATASINK_NAME = prod_data_fixture
+    SUBJECT_ID = 'TE12345'
     sharepoint_cred = config.parse(config_file, 'sharepoint-test')
     add_sharepoint_keystore(sharepoint_cred, PROJECT_ID)
 
@@ -146,6 +149,7 @@ def test_fetch_subject_data(prod_data_fixture):
             keystore_name=sharepoint_cred['key_name'],
             site_url=sharepoint_cred['site_url'],
             form_name=sharepoint_cred['form_name'],
+            modality=sharepoint_cred['modality']
             )
 
     sharepointDataSource = SharepointDataSource(
