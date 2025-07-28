@@ -77,6 +77,8 @@ def add_filter_logic_for_penncnb_redcap(filter_logic: str,
             # f"contains([{subject_id_var}], '{subject_id}={x}')"
             # for x in digits_str]
 
+    filter_logic = f"[{subject_id_var}] = '{subject_id}' or " \
+            f"[{subject_id_var}] = '{subject_id.lower()}'"
     # filter_logic += f"or {' or '.join(contains_logic)}"
     # return filter_logic
     contains_logic = []
@@ -139,14 +141,14 @@ def fetch_subject_data(
     else:
         subject_id_var = redcap_data_source.\
                 data_source_metadata.subject_id_variable
-        filter_logic = f"[{subject_id_var}] = '{subject_id}' or " \
-                f"[{subject_id_var}] = '{subject_id.lower()}'"
+        filter_logic = ''
 
         if redcap_data_source.\
                 data_source_metadata.messy_subject_id:
             filter_logic = add_filter_logic_for_penncnb_redcap(
                     filter_logic, subject_id, subject_id_var)
 
+        filter_logic = ''
         print(filter_logic)
         data = {
             "token": api_token,
