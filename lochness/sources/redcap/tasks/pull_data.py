@@ -66,27 +66,19 @@ def add_filter_logic_for_penncnb_redcap(filter_logic: str,
         str: The enhanced filter logic string with additional conditions 
              included for handling various subject ID suffix patterns.
     """
-    # digits = [1, 2, 3, 4, 5, 6, 7, 8, 9]
-    # digits_str = [str(x) for x in digits]
-    # contains_logic = []
-    # for subject_id in [subject_id, subject_id.lower()]:
-        # contains_logic += [
-            # f"contains([{subject_id_var}], '{subject_id}_{x}')"
-            # for x in digits_str]
-        # contains_logic += [
-            # f"contains([{subject_id_var}], '{subject_id}={x}')"
-            # for x in digits_str]
-
     filter_logic = f"[{subject_id_var}] = '{subject_id}' or " \
             f"[{subject_id_var}] = '{subject_id.lower()}'"
-    # filter_logic += f"or {' or '.join(contains_logic)}"
-    # return filter_logic
+
+    digits = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    digits_str = [str(x) for x in digits]
     contains_logic = []
     for subject_id in [subject_id, subject_id.lower()]:
         contains_logic += [
-            f"[{subject_id_var}] like '{subject_id}_%'"]
+            f"contains([{subject_id_var}], '{subject_id}_{x}')"
+            for x in digits_str]
         contains_logic += [
-            f"[{subject_id_var}] like '{subject_id}=%'"]
+            f"contains([{subject_id_var}], '{subject_id}={x}')"
+            for x in digits_str]
 
     filter_logic += f" or {' or '.join(contains_logic)}"
     return filter_logic
@@ -148,8 +140,6 @@ def fetch_subject_data(
             filter_logic = add_filter_logic_for_penncnb_redcap(
                     filter_logic, subject_id, subject_id_var)
 
-        filter_logic = ''
-        print(filter_logic)
         data = {
             "token": api_token,
             "content": "record",
@@ -165,11 +155,6 @@ def fetch_subject_data(
             "exportDataAccessGroups": "false",
             "filterLogic": filter_logic, # Export data for this specific subject
         }
-        print(data)
-        import json
-        with open('tmp.json', 'w') as fp:
-            json.dump(data, fp, indent=4)
-        
 
     try:
         r = requests.post(redcap_endpoint_url, data=data, timeout=timeout_s)

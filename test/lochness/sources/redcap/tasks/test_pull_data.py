@@ -100,7 +100,6 @@ def test_penncnb_fetch_subject_data(prod_data_fixture):
             SUBJECT_ID,
             encryption_passphrase)
 
-    print(data)
     assert len(data) > 100
 
 
@@ -118,6 +117,63 @@ def test_save_subject_data(prod_data_fixture):
             keystore_name=redcap_cred['key_name'],
             endpoint_url=redcap_cred['endpoint_url'],
             subject_id_variable=redcap_cred['subject_id_variable'],
+            subject_id_variable_as_the_pk=
+                redcap_cred['subject_id_variable_as_the_pk'],
+            messy_subject_id=redcap_cred['messy_subject_id'],
+            optional_variables_dictionary=[])
+
+    redcapDataSource = RedcapDataSource(
+        data_source_name=data_source_name,
+        is_active=True,
+        site_id=SITE_ID,
+        project_id=PROJECT_ID,
+        data_source_type='redcap',
+        data_source_metadata=redcapDataSourceMetadata)
+
+    data = fetch_subject_data(
+            redcapDataSource,
+            SUBJECT_ID,
+            encryption_passphrase)
+
+    assert save_subject_data(data, PROJECT_ID, SITE_ID, SUBJECT_ID, 
+                             data_source_name, config_file)
+
+    lochness_root = config.parse(config_file, 'general')['lochness_root']
+    project_name_cap = PROJECT_ID[:1].upper() + \
+            PROJECT_ID[1:].lower()
+
+    output_dir = (
+        Path(lochness_root)
+        / project_name_cap
+        / "PHOENIX"
+        / "PROTECTED"
+        / f"{project_name_cap}{SITE_ID}"
+        / "raw"
+        / SUBJECT_ID
+        / "surveys"
+    )
+    file_name = f"{SUBJECT_ID}.{project_name_cap}.{data_source_name}.json"
+    file_path = output_dir / file_name
+    assert file_path.is_file()
+
+
+def test_penncnb_save_subject_data(prod_data_fixture):
+    PROJECT_ID, PROJECT_NAME, SITE_ID, \
+            SITE_NAME, SUBJECT_ID, DATASINK_NAME = prod_data_fixture
+
+    config_file = utils.get_config_file_path()
+    encryption_passphrase = config.parse(config_file, 'general')[
+            'encryption_passphrase']
+    redcap_penncnb_cred = config.parse(config_file, 'redcap-penncnb-test')
+    data_source_name = redcap_penncnb_cred['data_source_name']
+
+    redcapDataSourceMetadata = RedcapDataSourceMetadata(
+            keystore_name=redcap_penncnb_cred['key_name'],
+            endpoint_url=redcap_penncnb_cred['endpoint_url'],
+            subject_id_variable=redcap_penncnb_cred['subject_id_variable'],
+            subject_id_variable_as_the_pk=
+                redcap_penncnb_cred['subject_id_variable_as_the_pk'],
+            messy_subject_id=redcap_penncnb_cred['messy_subject_id'],
             optional_variables_dictionary=[])
 
     redcapDataSource = RedcapDataSource(
@@ -161,7 +217,6 @@ def test_pull_and_push_single_data(prod_data_fixture):
     config_file = utils.get_config_file_path()
 
     refresh_all_metadata(config_file, PROJECT_ID, SITE_ID)
-
     pull_all_data(config_file=config_file,
                   project_id=PROJECT_ID,
                   site_id=SITE_ID,
@@ -210,4 +265,4 @@ def test_pull_and_push_single_data(prod_data_fixture):
     df = db.execute_sql(config_file, data_push_qeury)
     assert len(df) > 0
 
-    shutil.rmtree(outdir_root)
+    # shutil.rmtree(outdir_root)
