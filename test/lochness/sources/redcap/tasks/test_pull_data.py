@@ -159,3 +159,20 @@ def test_pull_and_push_single_data(prod_data_fixture, config_section):
     file_path = get_output_file_path(config_file, PROJECT_ID, SITE_ID, SUBJECT_ID, data_source.data_source_name)
     assert_file_and_db(config_file, file_path, PROJECT_ID, SITE_ID, SUBJECT_ID)
     cleanup_output(config_file, PROJECT_ID)
+
+
+def test_pull_all_data(prod_data_fixture):
+    PROJECT_ID, PROJECT_NAME, SITE_ID, SITE_NAME, SUBJECT_ID, DATASINK_NAME = prod_data_fixture
+
+    config_file = utils.get_config_file_path()
+    refresh_all_metadata(config_file, PROJECT_ID, SITE_ID)
+    pull_all_data(config_file=config_file,
+                  project_id=PROJECT_ID,
+                  site_id=SITE_ID,
+                  push_to_sink=True)
+
+    for config_section in ['redcap-test', 'redcap-penncnb-test']:
+        data_source = make_redcap_data_source(config_file, config_section, SITE_ID, PROJECT_ID)
+        file_path = get_output_file_path(config_file, PROJECT_ID, SITE_ID, SUBJECT_ID, data_source.data_source_name)
+    assert_file_and_db(config_file, file_path, PROJECT_ID, SITE_ID, SUBJECT_ID)
+    cleanup_output(config_file, PROJECT_ID)
