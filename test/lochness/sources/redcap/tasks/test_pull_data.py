@@ -122,9 +122,9 @@ def test_fetch_subject_data_redcap(prod_data_fixture):
 
 def test_fetch_subject_data_penncnb(prod_data_fixture):
     PROJECT_ID, PROJECT_NAME, SITE_ID, SITE_NAME, SUBJECT_ID, DATASINK_NAME = prod_data_fixture
+    config_file = utils.get_config_file_path()
     SUBJECT_ID=config.parse(config_file, 'prod-test-info')['subject_id_penncnb']
 
-    config_file = utils.get_config_file_path()
     encryption_passphrase = get_encryption_passphrase(config_file)
     data_source = make_redcap_data_source(config_file, "redcap-penncnb-test", SITE_ID, PROJECT_ID)
     data = fetch_subject_data(data_source, SUBJECT_ID, encryption_passphrase)
@@ -147,8 +147,8 @@ def test_save_subject_data(prod_data_fixture, config_section):
 def test_pull_and_push_single_data(prod_data_fixture, config_section):
     PROJECT_ID, PROJECT_NAME, SITE_ID, SITE_NAME, SUBJECT_ID, DATASINK_NAME = prod_data_fixture
 
-    SUBJECT_ID=config.parse(config_file, 'prod-test-info')['subject_id_penncnb']
     config_file = utils.get_config_file_path()
+    SUBJECT_ID=config.parse(config_file, 'prod-test-info')['subject_id_penncnb']
     refresh_all_metadata(config_file, PROJECT_ID, SITE_ID)
     pull_all_data(config_file=config_file,
                   project_id=PROJECT_ID,
