@@ -166,6 +166,8 @@ def test_fetch_subject_data(prod_data_fixture):
         encryption_passphrase=encryption_passphrase)
 
     delete_sharepoint_keystore(sharepoint_cred, PROJECT_ID)
+
+
 # @patch("lochness.sources.sharepoint.tasks.sync.get_sharepoint_cred")
 # @patch("lochness.sources.sharepoint.tasks.sync.msal.ConfidentialClientApplication")
 # def test_get_access_token(mock_msal_app, mock_get_sharepoint_cred):
