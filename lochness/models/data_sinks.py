@@ -4,8 +4,9 @@ pushed or stored after aquisition. This can include Object Stores,
 File Systems, or any other storage solutions.
 """
 
-from typing import Dict, Any, List
 from pathlib import Path
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel
 
 from lochness.helpers import db
@@ -82,7 +83,9 @@ class DataSink(BaseModel):
         return sql_query
 
     @staticmethod
-    def get_all_data_sinks(config_file: Path, active_only: bool = False) -> List["DataSink"]:
+    def get_all_data_sinks(
+        config_file: Path, active_only: bool = False
+    ) -> List["DataSink"]:
         """
         Retrieves all data sinks from the database.
 
@@ -110,14 +113,14 @@ class DataSink(BaseModel):
             data_sinks.append(data_sink)
         return data_sinks
 
-
     @staticmethod
-    def get_matching_data_sink(config_file: Path,
-                               site_id: str,
-                               project_id: str,
-                               active_only: bool = False,
-                               data_sink_name: Optional[str] = None,
-                               ) -> "DataSink":
+    def get_matching_data_sink(
+        config_file: Path,
+        site_id: str,
+        project_id: str,
+        active_only: bool = False,
+        data_sink_name: Optional[str] = None,
+    ) -> "Optional[DataSink]":
         """
         Retrieves the matching data sink
 
@@ -157,14 +160,20 @@ class DataSink(BaseModel):
             data_sink_metadata=row["data_sink_metadata"],
         )
 
-        if active_only and not data_sink.data_sink_metadata.get(
-                "active", False):
+        if active_only and not data_sink.data_sink_metadata.get("active", False):
             return None
 
         return data_sink
 
+    def get_data_sink_id(self, config_file) -> str:
+        """
+        Get the data sink ID for the current data sink.
 
-    def get_data_sink_id(self, config_file):
+        Args:
+            config_file (Path): Path to the configuration file.
+        Returns:
+            str: The data sink ID.
+        """
         query = f"""
             SELECT data_sink_id FROM data_sinks
             WHERE
@@ -174,12 +183,22 @@ class DataSink(BaseModel):
             LIMIT 1;
             """
         data_sink_id = db.execute_sql(config_file, query)
-        return data_sink_id.iloc[0]['data_sink_id']
+        return data_sink_id.iloc[0]["data_sink_id"]
 
-    def is_file_already_pushed(self,
-                               config_file: Path,
-                               file_path: Path,
-                               md5: str) -> bool:
+    def is_file_already_pushed(
+        self, config_file: Path, file_path: Path, md5: str
+    ) -> bool:
+        """
+        Check if a file (with the same hash) has already been pushed to the data sink.
+
+        Args:
+            config_file (Path): Path to the configuration file.
+            file_path (Path): Path to the file.
+            md5 (str): MD5 hash of the file.
+
+        Returns:
+            bool: True if the file has already been pushed, False otherwise.
+        """
         data_sink_id = self.get_data_sink_id(config_file)
         query = f"""
             SELECT 1 FROM data_push
@@ -195,9 +214,10 @@ class DataSink(BaseModel):
         else:
             return True
 
-
     def delete_record_query(self) -> str:
-        """Generate a query to delete a record from the table"""
+        """
+        Generate a query to delete a record from the table
+        """
         query = f"""DELETE FROM data_sinks
         WHERE
           data_sink_name = '{self.data_sink_name}'
