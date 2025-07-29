@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict
 
 
-def parse(path: Path, section: str) -> Dict[str, str]:
+def parse(path: Path, section: str) -> Dict[str, str | bool]:
     """
     Read the configuration file and return a dictionary of parameters for the given section.
 
