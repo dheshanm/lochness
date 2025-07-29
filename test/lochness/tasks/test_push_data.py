@@ -49,6 +49,7 @@ def test_push_file_to_sink(fake_data_fixture):
     file_obj.modality = 'surveys'
 
     config_file = utils.get_config_file_path()
+    redcap_cred = config.parse(config_file, 'redcap-test')
     minio_cred = config.parse(config_file, 'datasink-test')
     dataSink = DataSink.get_matching_data_sink(
             config_file=config_file,
@@ -61,7 +62,7 @@ def test_push_file_to_sink(fake_data_fixture):
     result = push_file_to_sink(file_obj=file_obj,
                                modality=file_obj.modality,
                                dataSink=dataSink,
-                               data_source_name='main_redcap',
+                               data_source_name=redcap_cred['data_source_name'],
                                project_id=PROJECT_ID,
                                site_id=SITE_ID,
                                subject_id=SUBJECT_ID,
