@@ -3,7 +3,7 @@ Data Source Model
 """
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -17,8 +17,11 @@ class RedcapDataSourceMetadata(BaseModel):
 
     keystore_name: str
     endpoint_url: str
-    subject_id_variable: str
     optional_variables_dictionary: List[Dict[str, str]]
+    main_redcap: bool = False
+    subject_id_variable: Optional[str]
+    subject_id_variable_as_the_pk: bool = True
+    messy_subject_id: bool = False
 
 
 class RedcapDataSource(BaseModel):
@@ -92,6 +95,7 @@ class RedcapDataSource(BaseModel):
                         "subject_id_variable"
                     ],
                     optional_variables_dictionary=optional_variables,
+                    main_redcap=row["data_source_metadata"]["main_redcap"],
                 ),
             )
             return redcap_data_source

@@ -82,6 +82,54 @@ class File:
         return sql_query
 
     @staticmethod
+    def get_most_recent_file_obj(config_file: Path, file_path: Path) -> 'File':
+        """
+        Return the most recent record that matches the given file_path.
+
+        Args:
+            config_file (Path): The database configuration file.
+            file_path (Path): The path to the file.
+
+        Returns:
+            File: The most recent File object.
+        """
+        f_path = db.sanitize_string(str(file_path))
+        sql_query = f"""
+        SELECT DISTINCT files.*,
+          data_sources.data_source_metadata->>'modality' as modality
+        FROM files
+        JOIN data_pull on data_pull.file_path = files.file_path AND
+          data_pull.file_md5 = files.file_md5
+        JOIN data_sources on
+          data_sources.data_source_name = data_pull.data_source_name
+          AND data_sources.site_id = data_pull.site_id
+          AND data_sources.project_id = data_pull.project_id
+        WHERE files.file_path = '{f_path}'
+        ORDER BY files.file_m_time DESC
+        LIMIT 1;
+        """
+        
+        sql_query = db.handle_null(sql_query)
+        result_df = db.execute_sql(config_file, sql_query)
+        
+        if result_df.empty:
+            return None
+        
+        row = result_df.iloc[0]
+        file_obj = object.__new__(File)
+        file_obj.file_path = Path(row["file_path"])
+        file_obj.file_name = Path(row["file_path"]).name
+        file_obj.file_type = Path(row["file_path"]).suffix
+        file_obj.md5 = row["file_md5"]
+        file_obj.m_time = row["file_m_time"]
+        file_obj.file_size_mb = row["file_size_mb"]
+        file_obj.file_type = row["file_type"]
+        file_obj.file_name = row["file_name"]
+        file_obj.modality = row["modality"]
+        
+        return file_obj
+
+    @staticmethod
     def drop_db_table_query() -> str:
         """
         Return the SQL query to drop the 'files' table if it exists.
@@ -133,10 +181,15 @@ class File:
           data_pull.site_id,
           data_pull.subject_id,
           data_pull.data_source_name,
+          data_sources.data_source_metadata->>'modality' as modality,
           files.*
         FROM files
         JOIN data_pull on data_pull.file_path = files.file_path AND
           data_pull.file_md5 = files.file_md5
+        JOIN data_sources on
+          data_sources.data_source_name = data_pull.data_source_name
+          AND data_sources.site_id = data_pull.site_id
+          AND data_sources.project_id = data_pull.project_id
         WHERE data_pull.project_id = '{project_id}'
           AND data_pull.site_id = '{site_id}'
         """
@@ -184,6 +237,7 @@ class File:
                 file_obj.project_id = row["project_id"]
                 file_obj.site_id = row["site_id"]
                 file_obj.subject_id = row["subject_id"]
+                file_obj.modality = row["modality"]
 
                 files_to_push.append(file_obj)
 

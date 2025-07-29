@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict
 
 
-def parse(path: Path, section: str) -> Dict[str, str]:
+def parse(path: Path, section: str) -> Dict[str, str | bool]:
     """
     Read the configuration file and return a dictionary of parameters for the given section.
 
@@ -28,7 +28,12 @@ def parse(path: Path, section: str) -> Dict[str, str]:
     if parser.has_section(section):
         params = parser.items(section)
         for param in params:
-            conf[param[0]] = param[1]
+            if param[1].lower() == 'true':
+                conf[param[0]] = True
+            elif param[1].lower() == 'false':
+                conf[param[0]] = False
+            else:
+                conf[param[0]] = param[1]
     else:
         raise ValueError(f"Section {section} not found in the {path} file")
 

@@ -204,7 +204,9 @@ def insert_metadata(
     )
 
 
-def refresh_all_metadata(config_file: Path, project_id: str = None, site_id: str = None):
+def refresh_all_metadata(config_file: Path,
+                         project_id: str = None,
+                         site_id: str = None):
     # Log start of the refresh process
     Logs(
         log_level="INFO",
@@ -217,7 +219,8 @@ def refresh_all_metadata(config_file: Path, project_id: str = None, site_id: str
     ).insert(config_file)
 
     # Get encryption passphrase from config
-    encryption_passphrase = config.parse(config_file, 'general')['encryption_passphrase']
+    encryption_passphrase = config.parse(config_file, 'general')[
+            'encryption_passphrase']
     
     active_redcap_data_sources = RedcapDataSource.get_all_redcap_data_sources(
         config_file=config_file, 
@@ -225,11 +228,18 @@ def refresh_all_metadata(config_file: Path, project_id: str = None, site_id: str
         active_only=True
     )
 
+    # make sure they have subject_id_variable in metadata
+    active_redcap_data_sources = [
+            ds for ds in active_redcap_data_sources
+            if ds.data_source_metadata.main_redcap == True]
+
     # Filter by project_id and/or site_id if provided
     if project_id:
-        active_redcap_data_sources = [ds for ds in active_redcap_data_sources if ds.project_id == project_id]
+        active_redcap_data_sources = [ds for ds in active_redcap_data_sources
+                                      if ds.project_id == project_id]
     if site_id:
-        active_redcap_data_sources = [ds for ds in active_redcap_data_sources if ds.site_id == site_id]
+        active_redcap_data_sources = [ds for ds in active_redcap_data_sources
+                                      if ds.site_id == site_id]
 
     if not active_redcap_data_sources:
         logger.info("No active REDCap data sources found.")

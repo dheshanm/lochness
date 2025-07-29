@@ -6,6 +6,19 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+for x in sys.path:
+    if 'lochness' in x:
+        sys.path.remove(x)
+
+file = Path(__file__).resolve()
+parent = file.parent
+root_dir = None
+for parent in file.parents:
+    if parent.name == "lochness_v2":
+        root_dir = parent
+
+sys.path.append(str(root_dir))
+sys.path.append(str(root_dir / 'test'))
 
 # Get the project root directory
 project_root = Path(__file__).resolve().parent.parent
@@ -42,7 +55,7 @@ def create_fake_records(project_id, project_name, site_id,
             'encryption_passphrase']
 
     redcap_cred = config.parse(config_file, 'redcap-test')
-    # create key store
+    # create key store the main redcap
     keystore = KeyStore(
             key_name=redcap_cred['key_name'],
             key_value=redcap_cred['key_value'],
@@ -52,8 +65,19 @@ def create_fake_records(project_id, project_name, site_id,
     db.execute_queries(config_file,
                        [keystore.to_sql_query(encryption_passphrase)])
 
+    # create key store for penn redcap
+    redcap_penncnb_cred = config.parse(config_file, 'redcap-penncnb-test')
+    keystore = KeyStore(
+            key_name=redcap_penncnb_cred['key_name'],
+            key_value=redcap_penncnb_cred['key_value'],
+            key_type=redcap_penncnb_cred['key_type'],
+            project_id=project_id,
+            key_metadata={})
+    db.execute_queries(config_file,
+                       [keystore.to_sql_query(encryption_passphrase)])
+
+    # create key store for data sink
     minio_cred = config.parse(config_file, 'datasink-test')
-    # create key store
     keystore = KeyStore(
             key_name=minio_cred['key_name'],
             key_value=minio_cred['key_value'],
@@ -103,17 +127,48 @@ def create_fake_records(project_id, project_name, site_id,
     db.execute_queries(config_file, [subject.to_sql_query()])
 
 
-    # create fake data source
+    # create fake data source for main redcap
     dataSource = DataSource(
-            data_source_name='main_redcap',
+            data_source_name=redcap_cred['data_source_name'],
             is_active=True,
             site_id=site_id,
             project_id=project_id,
             data_source_type='redcap',
-            data_source_metadata={'testing': True}
+            data_source_metadata={
+                'testing': True,
+                'modality': 'surveys',
+                'keystore_name': redcap_cred['key_name'],
+                'endpoint_url': redcap_cred['endpoint_url'],
+                'subject_id_variable': redcap_cred['subject_id_variable'],
+                'subject_id_variable_as_the_pk': 
+                    redcap_cred['subject_id_variable_as_the_pk'],
+                'messy_subject_id': 
+                    redcap_cred['messy_subject_id'],
+                'main_redcap': redcap_cred['main_redcap']
+                }
             )
     db.execute_queries(config_file, [dataSource.to_sql_query()])
 
+    # create fake data source for penncnb redcap
+    dataSource = DataSource(
+            data_source_name=redcap_penncnb_cred['data_source_name'],
+            is_active=True,
+            site_id=site_id,
+            project_id=project_id,
+            data_source_type='redcap',
+            data_source_metadata={
+                'testing': True,
+                'modality': 'surveys',
+                'keystore_name': redcap_penncnb_cred['key_name'],
+                'endpoint_url': redcap_penncnb_cred['endpoint_url'],
+                'subject_id_variable': redcap_penncnb_cred['subject_id_variable'],
+                'subject_id_variable_as_the_pk': 
+                    redcap_penncnb_cred['subject_id_variable_as_the_pk'],
+                'messy_subject_id': 
+                    redcap_penncnb_cred['messy_subject_id'],
+                'main_redcap': redcap_penncnb_cred['main_redcap']
+                })
+    db.execute_queries(config_file, [dataSource.to_sql_query()])
 
     test_file = Path('test_file.zip')
     test_file.touch()
@@ -126,7 +181,7 @@ def create_fake_records(project_id, project_name, site_id,
 
     dataPull = DataPull(
         subject_id=subject_id,
-        data_source_name='main_redcap',
+        data_source_name=redcap_cred['data_source_name'],
         site_id=site_id,
         project_id=project_id,
         file_path=str(test_file),
@@ -156,7 +211,47 @@ def fake_data_fixture():
 
 
 
-    # # Teardown: Delete fake records
+    # Teardown: Delete fake records
+    delete_fake_records(PROJECT_ID, PROJECT_NAME, SITE_ID,
+                        SITE_NAME, SUBJECT_ID, DATASINK_NAME)
+
+
+@pytest.fixture
+def prod_data_fixture():
+    """A pytest fixture to create and tear down fake data for tests."""
+
+    # load prod test information from config
+    prod_test_info = config.parse(config_file, 'prod-test-info')
+    PROJECT_ID = prod_test_info['project_id']
+    PROJECT_NAME = prod_test_info['project_name']
+    SITE_ID = prod_test_info['site_id']
+    SITE_NAME = prod_test_info['site_name']
+    SUBJECT_ID = prod_test_info['subject_id']
+    DATASINK_NAME = prod_test_info['datasink_name']
+
+    # Setup: Create fake records
+    create_fake_records(PROJECT_ID, PROJECT_NAME, SITE_ID,
+                        SITE_NAME, SUBJECT_ID, DATASINK_NAME)
+
+    yield PROJECT_ID, PROJECT_NAME, SITE_ID, \
+            SITE_NAME, SUBJECT_ID, DATASINK_NAME
+
+    delete_data_push = f"""DELETE FROM data_push
+    WHERE file_path IN (
+        SELECT files.file_path FROM files
+        JOIN data_pull ON files.file_path = data_pull.file_path
+        WHERE data_pull.project_id = '{PROJECT_ID}'
+          AND data_pull.site_id = '{SITE_ID}'
+    );"""
+    db.execute_queries(config_file, [delete_data_push])
+
+    delete_data_pull = f"""DELETE FROM data_pull 
+    WHERE project_id = '{PROJECT_ID}' AND site_id = '{SITE_ID}'
+    """
+    db.execute_queries(config_file, [delete_data_pull])
+    
+
+    # Teardown: Delete fake records
     delete_fake_records(PROJECT_ID, PROJECT_NAME, SITE_ID,
                         SITE_NAME, SUBJECT_ID, DATASINK_NAME)
 
@@ -179,6 +274,8 @@ def test_pipeline_with_fake_data(fake_data_fixture):
 
 def delete_fake_records(project_id, project_name, site_id,
                         site_name, subject_id, datasink_name):
+    redcap_cred = config.parse(config_file, 'redcap-test')
+    redcap_penncnb_cred = config.parse(config_file, 'redcap-penncnb-test')
     test_file = Path('test_file.zip')
 
     fileObj = File(
@@ -195,7 +292,7 @@ def delete_fake_records(project_id, project_name, site_id,
 
     dataPull = DataPull(
         subject_id=subject_id,
-        data_source_name='main_redcap',
+        data_source_name=redcap_cred['data_source_name'],
         site_id=site_id,
         project_id=project_id,
         file_path=str(test_file),
@@ -224,25 +321,33 @@ def delete_fake_records(project_id, project_name, site_id,
 
     # delete fake data source
     dataSource = DataSource(
-            data_source_name='main_redcap',
+            data_source_name=redcap_cred['data_source_name'],
             is_active=True,
             site_id=site_id,
             project_id=project_id,
             data_source_type='redcap',
-            data_source_metadata={'testing': True}
+            data_source_metadata={}
             )
     db.execute_queries(config_file, [dataSource.delete_record_query()])
 
-    # delete fake subject
-    subject = Subject(
-        subject_id=subject_id,
-        site_id=site_id,
-        project_id=project_id,
-        subject_metadata={'testing': True})
-    db.execute_queries(config_file, [subject.delete_record_query()])
+    dataSource = DataSource(
+            data_source_name=redcap_penncnb_cred['data_source_name'],
+            is_active=True,
+            site_id=site_id,
+            project_id=project_id,
+            data_source_type='redcap',
+            data_source_metadata={}
+            )
+    db.execute_queries(config_file, [dataSource.delete_record_query()])
+
+    # delete subjects for the test project_id and test site_id
+    subject_obj_list = Subject.get_subjects_for_project_site(
+            project_id, site_id, config_file)
+    for subject in subject_obj_list:
+        db.execute_queries(config_file,
+                           [subject.delete_record_query()])
 
     # delete fake site
-
     site = Site(
             site_id=site_id,
             site_name=site_name,
@@ -254,12 +359,20 @@ def delete_fake_records(project_id, project_name, site_id,
     db.execute_queries(config_file, [site.delete_record_query()])
 
 
-    redcap_cred = config.parse(config_file, 'redcap-test')
     # delete key store
     keystore = KeyStore(
             key_name=redcap_cred['key_name'],
             key_value=redcap_cred['key_value'],
             key_type=redcap_cred['key_type'],
+            project_id=project_id,
+            key_metadata={})
+    db.execute_queries(config_file,
+                       [keystore.delete_record_query()])
+
+    keystore = KeyStore(
+            key_name=redcap_penncnb_cred['key_name'],
+            key_value=redcap_penncnb_cred['key_value'],
+            key_type=redcap_penncnb_cred['key_type'],
             project_id=project_id,
             key_metadata={})
     db.execute_queries(config_file,
