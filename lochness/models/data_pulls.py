@@ -89,3 +89,73 @@ class DataPull(BaseModel):
                 '{file_path}', '{file_md5}', {pull_time_s}, '{pull_metadata}');
         """
         return sql_query
+
+    def __str__(self) -> str:
+        """
+        Returns a user-friendly string representation of the DataPull object.
+        """
+        return (f"DataPull(subject_id={self.subject_id}, data_source_name={self.data_source_name}, "
+                f"site_id={self.site_id}, project_id={self.project_id}, file_path={self.file_path}, "
+                f"file_md5={self.file_md5}, pull_time_s={self.pull_time_s}, pull_metadata={self.pull_metadata})")
+
+    def __repr__(self) -> str:
+        """
+        Returns a detailed string representation of the DataPull object for debugging.
+        """
+        return (f"<DataPull(subject_id='{self.subject_id}', data_source_name='{self.data_source_name}', "
+                f"site_id='{self.site_id}', project_id='{self.project_id}', file_path='{self.file_path}', "
+                f"file_md5='{self.file_md5}', pull_time_s={self.pull_time_s}, pull_metadata={self.pull_metadata})>")
+
+    @staticmethod
+    def get_most_recent_data_pull(config_file: str,
+                                  file_path: str,
+                                  file_md5: str) -> 'DataPull':
+        """
+        Returns the most recent data_pull record for the given
+        file_path and file_md5.
+
+        Args:
+            file_path (str): Path to the file.
+            file_md5 (str): MD5 hash of the file.
+            config_file (str): Path to the database configuration file.
+
+        Returns:
+            DataPull: The most recent data_pull record.
+        """
+        sql_query = f"""
+            SELECT * FROM data_pull
+            WHERE file_path = '{file_path}'
+              AND file_md5 = '{file_md5}'
+            ORDER BY pull_timestamp DESC
+            LIMIT 1;
+        """
+        
+        sql_query = db.handle_null(sql_query)
+        result_df = db.execute_sql(config_file, sql_query)
+
+        if result_df.empty:
+            return None
+        
+        row = result_df.iloc[0]
+        
+        return DataPull(
+            subject_id=row['subject_id'],
+            data_source_name=row['data_source_name'],
+            site_id=row['site_id'],
+            project_id=row['project_id'],
+            file_path=row['file_path'],
+            file_md5=row['file_md5'],
+            pull_time_s=row['pull_time_s'],
+            pull_metadata=row['pull_metadata']
+        )
+
+    def delete_record_query(self) -> str:
+        """Generate a query to delete a record from the table"""
+        query = f"""DELETE FROM data_pull
+        WHERE subject_id = '{self.subject_id}'
+          AND data_source_name = '{self.data_source_name}'
+          AND project_id = '{self.project_id}'
+          AND site_id = '{self.site_id}'
+          AND file_path = '{self.file_path}'
+          AND file_md5 = '{self.file_md5}';"""
+        return query

@@ -86,3 +86,11 @@ class DataPush(BaseModel):
         """
 
         return sql_query
+
+    def delete_record_query(self, data_sink_id) -> str:
+        """Generate a query to delete a record from the table"""
+        query = f"""DELETE FROM data_push
+        WHERE data_sink_id = '{data_sink_id}'
+          AND file_path = '{self.file_path}'
+          AND file_md5 = '{self.file_md5}';"""
+        return query

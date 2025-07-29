@@ -26,6 +26,7 @@ from lochness.models.files import File
 from lochness.models.data_pulls import DataPull
 from lochness.models.data_push import DataPush
 from lochness.models.data_sinks import DataSink
+from lochness.tasks.push_data import simple_push_file_to_sink
 from lochness.sources.redcap.models.data_source import RedcapDataSource
 
 MODULE_NAME = "lochness.sources.redcap.tasks.pull_data"
@@ -39,6 +40,48 @@ logargs: Dict[str, Any] = {
     "handlers": [RichHandler(rich_tracebacks=True)],
 }
 logging.basicConfig(**logargs)
+
+
+
+def add_filter_logic_for_penncnb_redcap(filter_logic: str,
+                                        subject_id: str,
+                                        subject_id_var: str):
+    """
+    Enhances the existing filter logic for fetching data from REDCap by adding 
+    conditions to handle subject IDs with various suffix patterns used in the 
+    PennCNB REDCap project.
+
+    This function appends additional logic to the provided filter logic string 
+    to accommodate different possible suffixes for subject IDs. These suffixes 
+    are used in REDCap to denote different sessions or versions of a subject's 
+    data.
+
+    Args:
+        filter_logic (str): The initial filter logic string to be enhanced.
+        subject_id (str): The subject ID for which data is being fetched.
+        subject_id_var (str): The variable name in REDCap that stores the 
+                              subject ID.
+
+    Returns:
+        str: The enhanced filter logic string with additional conditions 
+             included for handling various subject ID suffix patterns.
+    """
+    filter_logic = f"[{subject_id_var}] = '{subject_id}' or " \
+            f"[{subject_id_var}] = '{subject_id.lower()}'"
+
+    digits = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    digits_str = [str(x) for x in digits]
+    contains_logic = []
+    for subject_id in [subject_id, subject_id.lower()]:
+        contains_logic += [
+            f"contains([{subject_id_var}], '{subject_id}_{x}')"
+            for x in digits_str]
+        contains_logic += [
+            f"contains([{subject_id_var}], '{subject_id}={x}')"
+            for x in digits_str]
+
+    filter_logic += f" or {' or '.join(contains_logic)}"
+    return filter_logic
 
 
 def fetch_subject_data(
@@ -77,21 +120,49 @@ def fetch_subject_data(
     api_token_df = db.execute_sql(config_file, query)
     api_token = api_token_df['key_value'][0]
 
-    data = {
-        "token": api_token,
-        "content": "record",
-        "action": "export",
-        "format": "json",  # Changed from 'csv' to 'json'
-        "type": "flat",
-        "returnFormat": "json",
-        "records[0]": subject_id, # Export data for this specific subject
-    }
+    if redcap_data_source.data_source_metadata.subject_id_variable_as_the_pk:
+        data = {
+            "token": api_token,
+            "content": "record",
+            "action": "export",
+            "format": "json",  # Changed from 'csv' to 'json'
+            "type": "flat",
+            "returnFormat": "json",
+            "records[0]": subject_id, # Export data for this specific subject
+        }
+    else:
+        subject_id_var = redcap_data_source.\
+                data_source_metadata.subject_id_variable
+        filter_logic = ''
+
+        if redcap_data_source.\
+                data_source_metadata.messy_subject_id:
+            filter_logic = add_filter_logic_for_penncnb_redcap(
+                    filter_logic, subject_id, subject_id_var)
+
+        data = {
+            "token": api_token,
+            "content": "record",
+            "action": "export",
+            "format": "json",  # Changed from 'csv' to 'json'
+            "type": "flat",
+            "returnFormat": "json",
+            "csvDelimiter": "",
+            "rawOrLabel": "raw",
+            "rawOrLabelHeaders": "raw",
+            "exportCheckboxLabel": "false",
+            "exportSurveyFields": "false",
+            "exportDataAccessGroups": "false",
+            "filterLogic": filter_logic, # Export data for this specific subject
+        }
 
     try:
         r = requests.post(redcap_endpoint_url, data=data, timeout=timeout_s)
         r.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
         return r.content
+
     except requests.exceptions.RequestException as e:
+        logger.error(f"filter_logic: {filter_logic}")
         logger.error(f"Failed to fetch data for {identifier}: {e}")
         Logs(
             log_level="ERROR",
@@ -186,281 +257,11 @@ def save_subject_data(
         return None
 
 
-def push_to_data_sink(
-    file_path: Path,
-    file_md5: str,
-    project_id: str,
-    site_id: str,
-    config_file: Path,
-) -> Optional[DataPush]:
-    """
-    Pushes a file to a data sink for the given project and site.
-
-    Args:
-        file_path (Path): Path to the file to push.
-        file_md5 (str): MD5 hash of the file.
-        project_id (str): The project ID.
-        site_id (str): The site ID.
-        config_file (Path): Path to the config file.
-
-    Returns:
-        Optional[DataPush]: The data push record if successful, None otherwise.
-    """
-    try:
-        # Get data sinks for this project and site
-        sql_query = f"""
-            SELECT data_sink_id, data_sink_name, data_sink_metadata
-            FROM data_sinks
-            WHERE project_id = '{project_id}' AND site_id = '{site_id}'
-        """
-        df = db.execute_sql(config_file, sql_query)
-        
-        if df.empty:
-            logger.warning(f"No data sinks found for {project_id}::{site_id}")
-            return None
-
-        # For now, use the first data sink found
-        data_sink = df.iloc[0]
-        data_sink_id = data_sink['data_sink_id']
-        data_sink_name = data_sink['data_sink_name']
-        data_sink_metadata = data_sink['data_sink_metadata']
-
-        logger.info(f"Pushing {file_path} to data sink {data_sink_name}...")
-
-        # Check if this is a MinIO data sink
-        if data_sink_metadata.get('keystore_name'):
-            # This is likely a MinIO data sink
-            return push_to_minio_sink(
-                file_path=file_path,
-                file_md5=file_md5,
-                data_sink_id=data_sink_id,
-                data_sink_name=data_sink_name,
-                data_sink_metadata=data_sink_metadata,
-                project_id=project_id,
-                site_id=site_id,
-                config_file=config_file,
-            )
-        else:
-            # For other data sink types, simulate upload for now
-            start_time = datetime.now()
-            import time
-            time.sleep(1)  # Simulate upload time
-            end_time = datetime.now()
-            push_time_s = int((end_time - start_time).total_seconds())
-
-            data_push = DataPush(
-                data_sink_id=data_sink_id,
-                file_path=str(file_path),
-                file_md5=file_md5,
-                push_time_s=push_time_s,
-                push_metadata={
-                    "data_sink_name": data_sink_name,
-                    "data_sink_metadata": data_sink_metadata,
-                    "upload_simulated": True,  # Flag to indicate this was simulated
-                },
-                push_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            )
-
-            # Insert the data push record
-            db.execute_queries(config_file, [data_push.to_sql_query()], show_commands=False)
-
-            logger.info(f"Successfully pushed {file_path} to data sink {data_sink_name}")
-            Logs(
-                log_level="INFO",
-                log_message={
-                    "event": "redcap_data_push_success",
-                    "message": f"Successfully pushed {file_path} to data sink {data_sink_name}.",
-                    "project_id": project_id,
-                    "site_id": site_id,
-                    "data_sink_name": data_sink_name,
-                    "file_path": str(file_path),
-                    "push_time_s": push_time_s,
-                },
-            ).insert(config_file)
-
-            return data_push
-
-    except Exception as e:
-        logger.error(f"Failed to push {file_path} to data sink: {e}")
-        Logs(
-            log_level="ERROR",
-            log_message={
-                "event": "redcap_data_push_failed",
-                "message": f"Failed to push {file_path} to data sink.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "file_path": str(file_path),
-                "error": str(e),
-            },
-        ).insert(config_file)
-        return None
-
-
-def push_to_minio_sink(
-    file_path: Path,
-    file_md5: str,
-    data_sink_id: int,
-    data_sink_name: str,
-    data_sink_metadata: Dict[str, Any],
-    project_id: str,
-    site_id: str,
-    config_file: Path,
-) -> Optional[DataPush]:
-    """
-    Pushes a file to a MinIO data sink.
-    """
-    try:
-        # --- NEW LOGIC: Check for existing push with same md5 ---
-        check_push_query = f"""
-            SELECT 1 FROM data_push
-            WHERE data_sink_id = {data_sink_id}
-              AND file_path = '{str(file_path).replace("'", "''")}'
-              AND file_md5 = '{file_md5}'
-            LIMIT 1;
-        """
-        push_exists = db.execute_sql(config_file, check_push_query)
-        if not push_exists.empty:
-            logger.info(f"File {file_path} (md5={file_md5}) already pushed to MinIO sink {data_sink_name}, skipping.")
-            Logs(
-                log_level="INFO",
-                log_message={
-                    "event": "minio_data_push_already_exists",
-                    "message": f"File {file_path} (md5={file_md5}) already pushed to MinIO sink {data_sink_name}, skipping.",
-                    "file_path": str(file_path),
-                    "data_sink_name": data_sink_name,
-                    "project_id": project_id,
-                    "site_id": site_id,
-                },
-            ).insert(config_file)
-            return None
-        # --- END NEW LOGIC ---
-        # Extract MinIO configuration from data sink metadata
-        bucket_name = data_sink_metadata.get('bucket')
-        keystore_name = data_sink_metadata.get('keystore_name')
-        endpoint_url = data_sink_metadata.get('endpoint')
-
-        if not all([bucket_name, keystore_name, endpoint_url]):
-            logger.error(f"Missing required MinIO configuration in data sink metadata: {data_sink_metadata}")
-            return None
-
-        # Import MinIO client
-        from minio import Minio
-        from minio.error import S3Error
-        from lochness.sources.minio.tasks.credentials import get_minio_cred
-
-        # Get MinIO credentials from keystore
-        logger.info(f"Getting MinIO credentials for keystore: {keystore_name}, project: {project_id}")
-        minio_creds = get_minio_cred(keystore_name, project_id)
-        # Mask credentials in logs: only log presence, not values
-        logger.info(f"Retrieved MinIO credentials: access_key={'***' if 'access_key' in minio_creds else 'MISSING'}, secret_key={'***' if 'secret_key' in minio_creds else 'MISSING'}")
-        access_key = minio_creds["access_key"]
-        secret_key = minio_creds["secret_key"]
-
-        # Initialize MinIO client
-        endpoint_host = endpoint_url.replace("http://", "").replace("https://", "")
-        client = Minio(
-            endpoint_host,
-            access_key=access_key,
-            secret_key=secret_key,
-            secure=endpoint_url.startswith("https"),
-        )
-
-        # Ensure bucket exists
-        if not client.bucket_exists(bucket_name):
-            logger.info(f"Bucket '{bucket_name}' does not exist. Creating...")
-            client.make_bucket(bucket_name)
-            logger.info(f"Bucket '{bucket_name}' created.")
-        else:
-            logger.info(f"Bucket '{bucket_name}' already exists.")
-
-        # Create object name based on file path structure
-        # Extract the relative path from the lochness root directory
-        lochness_root = config.parse(config_file, 'general')['lochness_root']
-        relative_path = file_path.relative_to(Path(lochness_root))
-        object_name = str(relative_path).replace("\\", "/")  # Ensure forward slashes for S3
-
-        # Upload the file
-        logger.info(f"Uploading '{file_path}' to '{bucket_name}/{object_name}'...")
-        start_time = datetime.now()
-        
-        client.fput_object(
-            bucket_name,
-            object_name,
-            str(file_path),
-            content_type="application/json",
-        )
-        
-        end_time = datetime.now()
-        push_time_s = int((end_time - start_time).total_seconds())
-        logger.info(f"Upload successful. Time taken: {push_time_s} seconds.")
-
-        # Create data push record
-        data_push = DataPush(
-            data_sink_id=data_sink_id,
-            file_path=str(file_path),
-            file_md5=file_md5,
-            push_time_s=push_time_s,
-            push_metadata={
-                "object_name": object_name,
-                "bucket_name": bucket_name,
-                "endpoint_url": endpoint_url,
-                "upload_simulated": False,  # Flag to indicate this was real upload
-            },
-            push_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        )
-
-        # Insert the data push record
-        db.execute_queries(config_file, [data_push.to_sql_query()], show_commands=False)
-
-        logger.info(f"Successfully pushed {file_path} to MinIO data sink {data_sink_name}")
-        Logs(
-            log_level="INFO",
-            log_message={
-                "event": "redcap_data_push_success",
-                "message": f"Successfully pushed {file_path} to MinIO data sink {data_sink_name}.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "data_sink_name": data_sink_name,
-                "file_path": str(file_path),
-                "object_name": object_name,
-                "bucket_name": bucket_name,
-                "push_time_s": push_time_s,
-            },
-        ).insert(config_file)
-
-        return data_push
-
-    except S3Error as e:
-        logger.error(f"MinIO S3 Error while pushing {file_path}: {e}")
-        Logs(
-            log_level="ERROR",
-            log_message={
-                "event": "redcap_data_push_minio_error",
-                "message": f"MinIO S3 Error while pushing {file_path}.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "file_path": str(file_path),
-                "error": str(e),
-            },
-        ).insert(config_file)
-        return None
-    except Exception as e:
-        logger.error(f"Failed to push {file_path} to MinIO data sink: {e}")
-        Logs(
-            log_level="ERROR",
-            log_message={
-                "event": "redcap_data_push_failed",
-                "message": f"Failed to push {file_path} to MinIO data sink.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "file_path": str(file_path),
-                "error": str(e),
-            },
-        ).insert(config_file)
-        return None
-
-
-def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None, push_to_sink: bool = False):
+def pull_all_data(config_file: Path,
+                  project_id: str = None,
+                  site_id: str = None,
+                  subject_id_list: list = None,
+                  push_to_sink: bool = False):
     """
     Main function to pull data for all active REDCap data sources and subjects.
     """
@@ -522,6 +323,10 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
             site_id=redcap_data_source.site_id,
             config_file=config_file
         )
+
+        if subject_id_list:
+            subjects_in_db = [x for x in subjects_in_db
+                              if x.subject_id in subject_id_list]
 
         if not subjects_in_db:
             logger.info(f"No subjects found for {redcap_data_source.project_id}::{redcap_data_source.site_id}.")
@@ -589,13 +394,8 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
 
                     # Push to data sink if requested
                     if push_to_sink:
-                        push_to_data_sink(
-                            file_path=file_path,
-                            file_md5=file_md5,
-                            project_id=subject.project_id,
-                            site_id=subject.site_id,
-                            config_file=config_file,
-                        )
+                        logger.info(f"Pushing the file to sink")
+                        simple_push_file_to_sink(str(file_path))
 
 
 if __name__ == "__main__":
