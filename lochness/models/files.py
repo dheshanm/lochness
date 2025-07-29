@@ -116,7 +116,10 @@ class File:
             return None
         
         row = result_df.iloc[0]
-        file_obj = File(file_path=Path(row["file_path"]), with_hash=False)
+        file_obj = object.__new__(File)
+        file_obj.file_path = Path(row["file_path"])
+        file_obj.file_name = Path(row["file_path"]).name
+        file_obj.file_type = Path(row["file_path"]).suffix
         file_obj.md5 = row["file_md5"]
         file_obj.m_time = row["file_m_time"]
         file_obj.file_size_mb = row["file_size_mb"]
