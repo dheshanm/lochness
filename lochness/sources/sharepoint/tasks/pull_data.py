@@ -211,19 +211,23 @@ def should_download_file(local_file_path: Path, quick_xor_hash: Optional[str]) -
     return True
 
 
-def download_file(download_url: str, local_path: str):
-    logger.info(f"Downloading {local_path}...")
+def download_file(download_url: str, local_path: str, to_tmp: bool=False):
+    if to_tmp:
+        logger.info(f"Checking {local_path}...")
+    else:
+        logger.info(f"Downloading {local_path}...")
     resp = requests.get(download_url)
     if resp.status_code == 200:
         with open(local_path, 'wb') as f:
             f.write(resp.content)
-        logger.info(f"Downloaded to {local_path}")
+        if not to_tmp:
+            logger.info(f"Downloaded to {local_path}")
     else:
         logger.error(f"Failed to download file: {local_path} (HTTP {resp.status_code})")
         raise RuntimeError(f"Failed to download file: {local_path} (HTTP {resp.status_code})")
 
 
-def extract_subject_id_and_form_title(json_path: str):
+def extract_info(json_path: str):
     """
     Extract ampsczSubjectId and formTitle from a response.submitted.json file.
     Returns (subject_id, form_title) tuple.
@@ -237,7 +241,18 @@ def extract_subject_id_and_form_title(json_path: str):
         subject_id = data.get('data', {}).get('data', {}).get('ampsczSubjectId')
     except Exception:
         pass
-    return subject_id, form_title
+
+    try:
+        #TODO
+        date_str = data.get('data', {}).get('data', {}).get('dateOfEgg')
+        dt = datetime.fromisoformat(date_str)
+        # date_only = dt.date()
+        dt_str = dt.strftime('%Y_%m_%d')
+    except Exception:
+        date_only = None
+        pass
+
+    return subject_id, form_title, dt_str
 
 
 def download_eeg_upload_files(
@@ -291,7 +306,7 @@ def download_eeg_upload_files(
                 )
                 continue
             download_file(download_url, response_json_path)
-            subject_id, form_title = extract_subject_id_and_form_title(response_json_path)
+            subject_id, form_title, date_only = extract_info(response_json_path)
             if not subject_id or not form_title:
                 logger.warning(
                     f"Could not extract subject_id or form_title from response.submitted.json in {subfolder_name}, skipping."
@@ -397,22 +412,25 @@ def fetch_subject_data(
     project_id = sharepoint_data_source.project_id
     site_id = sharepoint_data_source.site_id
     data_source_name = sharepoint_data_source.data_source_name
-    modality = sharepoint_data_source.data_source_metadata.modality if \
-            sharepoint_data_source.data_source_metadata.modality else 'unknown'
+
+    metadata = sharepoint_data_source.data_source_metadata
+    form_name = metadata.form_name
+    modality = getattr(metadata, 'modality', 'unknown')
+    
 
     identifier = f"{project_id}::{site_id}::{data_source_name}::{subject_id}"
     logger.info(f"Fetching data for {identifier}...")
 
     config_file = utils.get_config_file_path()
     query = KeyStore.retrieve_key_query(
-        sharepoint_data_source.data_source_metadata.keystore_name,
+        metadata.keystore_name,
         project_id,
         encryption_passphrase,
     )
     app_key = db.execute_sql(config_file, query).iloc[0]
 
     metadata_query = KeyStore.retrieve_key_metadata(
-        sharepoint_data_source.data_source_metadata.keystore_name,
+        metadata.keystore_name,
         project_id,
     )
     keystore_metadata = db.execute_sql(
@@ -438,11 +456,11 @@ def fetch_subject_data(
     matching_folder = find_subfolder(
             drive_id,
             responses_folder["id"],
-            sharepoint_data_source.data_source_metadata.form_name,
+            form_name,
             headers)
 
     if not matching_folder:
-        raise RuntimeError("EEG Upload folder not found inside 'Responses'.")
+        raise RuntimeError(f"'{form_name}' folder not found inside 'Responses'.")
 
     project_name_cap = project_id[:1].upper() + project_id[1:].lower() if project_id else project_id
 
@@ -462,7 +480,9 @@ def fetch_subject_data(
 
     subfolders = list_folder_items(drive_id, matching_folder["id"], headers)
     if not subfolders:
-        logger.info("No subfolders found in EEG Upload.")
+        logger.info(f"No subfolders found in '{form_title}'.")
+    else:
+        logger.info(f"Found {len(subfolders)} subfolders.")
 
     for subfolder in subfolders:
         subfolder_name = subfolder['name']
@@ -495,8 +515,8 @@ def fetch_subject_data(
                     f"No download URL for response.submitted.json in {subfolder_name}, skipping."
                 )
                 continue
-            download_file(download_url, temp_file_path)
-            form_subject_id, form_title = extract_subject_id_and_form_title(
+            download_file(download_url, temp_file_path, to_tmp=True)
+            form_subject_id, form_title, date_only = extract_info(
                     temp_file_path)
 
             if form_subject_id != subject_id:
@@ -504,14 +524,21 @@ def fetch_subject_data(
                     f"Skipping subfolder {subfolder_name} (subject_id {form_subject_id} != {subject_id})"
                 )
                 continue
-            if form_title != sharepoint_data_source.data_source_metadata.form_name:
+            if form_title != form_name:
                 logger.info(
-                    f"Skipping subfolder {subfolder_name} (form_title {form_title} != {sharepoint_data_source.data_source_metadata.form_name})"
+                    f"Skipping subfolder {subfolder_name} (form_title {form_title} != {form_name})"
                 )
                 continue
 
             # Now set the final local path
             # Move response.submitted.json to the new location
+            logger.info(
+                f"Found matching form - {form_name} - {subject_id}"
+            )
+
+
+            output_dir = output_dir / date_only
+            output_dir.mkdir(parents=True, exist_ok=True)
             shutil.move(
                 temp_file_path,
                 output_dir / "response.submitted.json", 
