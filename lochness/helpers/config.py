@@ -24,13 +24,13 @@ def parse(path: Path, section: str) -> Dict[str, str | bool]:
     parser = ConfigParser()
     parser.read(path)
 
-    conf: Dict[str, str] = {}
+    conf: Dict[str, str | bool] = {}
     if parser.has_section(section):
         params = parser.items(section)
         for param in params:
-            if param[1].lower() == 'true':
+            if param[1].lower() == "true":
                 conf[param[0]] = True
-            elif param[1].lower() == 'false':
+            elif param[1].lower() == "false":
                 conf[param[0]] = False
             else:
                 conf[param[0]] = param[1]
