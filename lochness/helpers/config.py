@@ -38,3 +38,17 @@ def parse(path: Path, section: str) -> Dict[str, str | bool]:
         raise ValueError(f"Section {section} not found in the {path} file")
 
     return conf
+
+
+def get_encryption_passphrase(config_file: Path) -> str:
+    """
+    Get the encryption passphrase from the configuration file.
+    Args:
+        config_file (Path): The path to the configuration file.
+    Returns:
+        str: The encryption passphrase.
+    """
+    passphrase: str = parse(config_file, "general")[
+        "encryption_passphrase"
+    ]  # type: ignore[assignment]
+    return passphrase

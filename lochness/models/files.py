@@ -5,9 +5,12 @@ File Model
 
 from pathlib import Path
 from datetime import datetime
+from typing import Optional, List
+
+import pandas as pd
 
 from lochness.helpers import db
-from lochness.helpers.hash import compute_hash
+from lochness.helpers import hash as hash_helper
 from lochness.models.logs import Logs
 
 
@@ -19,11 +22,7 @@ class File:
         file_path (Path): The path to the file.
     """
 
-    def __init__(
-        self,
-        file_path: Path,
-        with_hash: bool = True
-    ):
+    def __init__(self, file_path: Path, with_hash: bool = True):
         """
         Initialize a File object.
 
@@ -44,7 +43,7 @@ class File:
         self.file_size_mb = file_path.stat().st_size / 1024 / 1024
         self.m_time = datetime.fromtimestamp(file_path.stat().st_mtime)
         if with_hash:
-            self.md5 = compute_hash(file_path=file_path, hash_type="md5")
+            self.md5 = hash_helper.compute_fingerprint(file_path=file_path)
         else:
             self.md5 = None
 
@@ -81,7 +80,7 @@ class File:
         return sql_query
 
     @staticmethod
-    def get_most_recent_file_obj(config_file: Path, file_path: Path) -> 'File':
+    def get_most_recent_file_obj(config_file: Path, file_path: Path) -> Optional["File"]:
         """
         Return the most recent record that matches the given file_path.
 
@@ -107,13 +106,13 @@ class File:
         ORDER BY files.file_m_time DESC
         LIMIT 1;
         """
-        
+
         sql_query = db.handle_null(sql_query)
         result_df = db.execute_sql(config_file, sql_query)
-        
+
         if result_df.empty:
             return None
-        
+
         row = result_df.iloc[0]
         file_obj = object.__new__(File)
         file_obj.file_path = Path(row["file_path"])
@@ -125,7 +124,7 @@ class File:
         file_obj.file_type = row["file_type"]
         file_obj.file_name = row["file_name"]
         file_obj.modality = row["modality"]
-        
+
         return file_obj
 
     @staticmethod
@@ -139,7 +138,7 @@ class File:
 
         return sql_query
 
-    def to_sql_query(self):
+    def to_sql_query(self) -> str:
         """
         Return the SQL query to insert the File object into the 'files' table.
         """
@@ -169,13 +168,12 @@ class File:
 
     @staticmethod
     def get_all_files_in_df(
-            config_file: Path,
-            project_id: str,
-            site_id: str) -> pd.DataFrame:
+        config_file: Path, project_id: str, site_id: str
+    ) -> pd.DataFrame:
         """
         Return the files to push for a given project and site.
         """
-        sql_query = f"""SELECT DISTINCT 
+        sql_query = f"""SELECT DISTINCT
           data_pull.project_id,
           data_pull.site_id,
           data_pull.subject_id,
@@ -212,18 +210,15 @@ class File:
         files_df = db.execute_sql(config_file, sql_query)
 
         return files_df
-    
+
     @staticmethod
     def get_files_to_push(
-            config_file: Path,
-            project_id: str,
-            site_id: str) -> list['File']:
+        config_file: Path, project_id: str, site_id: str
+    ) -> List["File"]:
         """
         Return the files to push for a given project and site.
         """
-        files_df = File.get_all_files_in_df(config_file,
-                                            project_id,
-                                            site_id)
+        files_df = File.get_all_files_in_df(config_file, project_id, site_id)
         files_to_push = []
         for _, row in files_df.iterrows():
             try:

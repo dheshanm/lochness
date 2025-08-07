@@ -6,35 +6,41 @@ This script pulls data from MindLAMP data sources and saves it to the file syste
 
 import sys
 from pathlib import Path
-import json
-import logging
-import base64
-import re
-import tempfile
-import time
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
-import pytz
 
-from rich.logging import RichHandler
-
-# Add project root to Python path
 file = Path(__file__).resolve()
 parent = file.parent
-root_dir = None
-for p in file.parents:
-    if p.name == "lochness_v2":
-        root_dir = p
+root_dir = None  # pylint: disable=invalid-name
+for parent in file.parents:
+    if parent.name == "lochness_v2":
+        root_dir = parent
 
 sys.path.append(str(root_dir))
 
-from lochness.helpers import utils, db, config
-from lochness.models.keystore import KeyStore
-from lochness.models.subjects import Subject
-from lochness.models.files import File
+# remove current directory from path
+try:
+    sys.path.remove(str(parent))
+except ValueError:
+    pass
+
+import argparse
+import base64
+import json
+import logging
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+import LAMP
+import pandas as pd
+import pytz
+from rich.logging import RichHandler
+
+from lochness.helpers import config, db
+from lochness.helpers.timer import Timer
 from lochness.models.data_pulls import DataPull
-from lochness.models.data_push import DataPush
+from lochness.models.files import File
+from lochness.models.keystore import KeyStore
 from lochness.models.logs import Logs
+from lochness.models.subjects import Subject
 from lochness.sources.mindlamp.models.data_source import MindLAMPDataSource
 
 MODULE_NAME = "lochness.sources.mindlamp.tasks.pull_data"
@@ -47,40 +53,51 @@ logargs: Dict[str, Any] = {
 }
 logging.basicConfig(**logargs)
 
-# Import LAMP SDK
-try:
-    import LAMP
-except ImportError:
-    logger.error("LAMP SDK not found. Please install it with: pip install lamp-python")
-    sys.exit(1)
-
 LIMIT = 1000000
 
 
-def get_mindlamp_cred(
-    mindlamp_data_source: MindLAMPDataSource,
+def get_mindlamp_credentials(
+    mindlamp_data_source: MindLAMPDataSource, config_file: Path
 ) -> Dict[str, str]:
-    """Get MindLAMP credentials from the keystore."""
-    config_file = utils.get_config_file_path()
-    encryption_passphrase = config.parse(config_file, "general")[
-        "encryption_passphrase"
-    ]
+    """
+    Get MindLAMP credentials from the keystore.
 
-    keystore = KeyStore.get_by_name_and_project(
-        config_file,
-        mindlamp_data_source.data_source_metadata.keystore_name,
-        mindlamp_data_source.project_id,
-        encryption_passphrase,
+    Args:
+        mindlamp_data_source (MindLAMPDataSource): The MindLAMP data source object.
+        config_file (Path): Path to the configuration file.
+
+    Returns:
+        Dict[str, str]: A dictionary containing the MindLAMP credentials.
+    """
+    project_id = mindlamp_data_source.project_id
+    keystore_name = mindlamp_data_source.data_source_metadata.keystore_name
+
+    keystore = KeyStore.retrieve_keystore(
+        config_file=config_file, key_name=keystore_name, project_id=project_id
     )
+
     if keystore:
         return json.loads(keystore.key_value)
     else:
         raise ValueError("MindLAMP credentials not found in keystore")
 
 
-def connect_to_mindlamp(mindlamp_data_source: MindLAMPDataSource) -> LAMP:
-    """Connect to MindLAMP API."""
-    credentials = get_mindlamp_cred(mindlamp_data_source)
+def connect_to_mindlamp(
+    mindlamp_data_source: MindLAMPDataSource, config_file: Path
+) -> None:
+    """
+    Connect to MindLAMP API
+
+    Args:
+        mindlamp_data_source (MindLAMPDataSource): The MindLAMP data source object.
+        config_file (Path): Path to the configuration file.
+
+    Raises:
+        ValueError: If required credentials are missing.
+    """
+    credentials = get_mindlamp_credentials(
+        mindlamp_data_source=mindlamp_data_source, config_file=config_file
+    )
     api_url = mindlamp_data_source.data_source_metadata.api_url
     access_key = credentials.get("access_key")
     secret_key = credentials.get("secret_key")
@@ -89,522 +106,490 @@ def connect_to_mindlamp(mindlamp_data_source: MindLAMPDataSource) -> LAMP:
         raise ValueError("Missing required MindLAMP credentials")
 
     # Connect to MindLAMP API
-    LAMP.connect(access_key, secret_key, api_url)
-    return LAMP
-
-
-def get_mindlamp_subjects(lamp: LAMP) -> List[Dict[str, Any]]:
-    """Get all subjects from MindLAMP API."""
     try:
-        # Get study information
-        study_objs = lamp.Study.all_by_researcher('me')['data']
-        if not study_objs:
-            logger.warning("No studies found in MindLAMP")
-            return []
-        
-        study_obj = study_objs[0]  # Use first study
-        study_id = study_obj['id']
-        
-        # Get participants for the study
-        subject_objs = lamp.Participant.all_by_study(study_id)['data']
-        return subject_objs
+        LAMP.connect(access_key, secret_key, api_url)
     except Exception as e:
-        logger.error(f"Failed to get MindLAMP subjects: {e}")
-        return []
+        logger.error(f"Failed to connect to MindLAMP API: {e}")
+        raise e
 
 
 def get_activity_events_lamp(
-    lamp: LAMP, 
-    subject_id: str,
-    from_ts: int = None, 
-    to_ts: int = None
+    mindlamp_id: str,
+    from_ts: Optional[int] = None,
+    to_ts: Optional[int] = None,
+    limit: int = LIMIT,
 ) -> List[Dict[str, Any]]:
-    """Get activity events for a subject from MindLAMP API."""
+    """
+    Get activity events for a subject from MindLAMP API.
+
+    Note: Might contain base64 encoded audio data.
+
+    Args:
+        mindlamp_id (str): The MindLAMP ID of the subject.
+        from_ts (Optional[int]): Start timestamp in milliseconds. Defaults to None.
+        to_ts (Optional[int]): End timestamp in milliseconds. Defaults to None.
+        limit (int): Maximum number of events to retrieve. Defaults to LIMIT.
+
+    Returns:
+        List[Dict[str, Any]]: A list of activity events.
+    """
     try:
-        activity_events = lamp.ActivityEvent.all_by_participant(
-            subject_id, _from=from_ts, to=to_ts, _limit=LIMIT
-        )['data']
+        activity_events = LAMP.ActivityEvent.all_by_participant(
+            mindlamp_id, _from=from_ts, to=to_ts, _limit=limit
+        )["data"]
         return activity_events
-    except Exception as e:
-        logger.error(f"Failed to get activity events for subject {subject_id}: {e}")
+    except Exception as e:  # pylint: disable=broad-except
+        logger.error(f"Failed to get activity events for subject {mindlamp_id}: {e}")
         return []
 
 
 def get_sensor_events_lamp(
-    lamp: LAMP, 
     subject_id: str,
-    from_ts: int = None, 
-    to_ts: int = None
+    from_ts: Optional[int] = None,
+    to_ts: Optional[int] = None,
+    limit: int = LIMIT,
 ) -> List[Dict[str, Any]]:
-    """Get sensor events for a subject from MindLAMP API."""
+    """
+    Get sensor events for a subject from MindLAMP API.
+
+    Args:
+        subject_id (str): The MindLAMP ID of the subject.
+        from_ts (Optional[int]): Start timestamp in milliseconds. Defaults to None.
+        to_ts (Optional[int]): End timestamp in milliseconds. Defaults to None.
+        limit (int): Maximum number of events to retrieve. Defaults to LIMIT.
+
+    Returns:
+        List[Dict[str, Any]]: A list of sensor events.
+    """
     try:
-        sensor_events = lamp.SensorEvent.all_by_participant(
-            subject_id, _from=from_ts, to=to_ts, _limit=LIMIT
-        )['data']
+        sensor_events = LAMP.SensorEvent.all_by_participant(
+            subject_id, _from=from_ts, to=to_ts, _limit=limit
+        )["data"]
         return sensor_events
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         logger.error(f"Failed to get sensor events for subject {subject_id}: {e}")
         return []
 
 
-def get_audio_out_from_content(activity_dicts: List[Dict[str, Any]], audio_file_name: str) -> List[Dict[str, Any]]:
-    """Separate out audio data from the content pulled from MindLAMP API."""
+def get_audio_out_from_content(
+    activity_dicts: List[Dict[str, Any]],
+    audio_data_root: Path,
+    audio_file_name_template: str,
+) -> Tuple[List[Dict[str, Any]], List[Path]]:
+    """
+    Separate out audio data from the content pulled from MindLAMP API.
+
+    Returns a tuple containing:
+    - List of activity dictionaries with audio URLs replaced by placeholders
+    - List of Paths to the saved audio files
+    """
     activity_dicts_wo_sound = []
     num = 0
-    
-    for activity_events_dicts in activity_dicts:
-        if 'url' in activity_events_dicts.get('static_data', {}):
-            audio = activity_events_dicts['static_data']['url']
-            activity_events_dicts['static_data']['url'] = f'SOUND_{num}'
+    audio_file_paths = []
 
+    for activity_events_dicts in activity_dicts:
+        if "url" in activity_events_dicts.get("static_data", {}):
+            audio: str = activity_events_dicts["static_data"]["url"]
+            activity_events_dicts["static_data"]["url"] = f"SOUND_{num}"
+            audio_timestamp: Optional[int] = activity_events_dicts.get(
+                "timestamp", None
+            )  # 1684976609734
+            audio_dt = (
+                datetime.fromtimestamp(audio_timestamp / 1000, tz=pytz.UTC)
+                if audio_timestamp
+                else None
+            )
+            suffix = (
+                f"_{audio_dt.strftime('%H_%M_%S')}_{num}_audio.mp3"
+                if audio_dt
+                else f"TIME_{num}_audio.mp3"
+            )
             try:
-                decode_bytes = base64.b64decode(audio.split(',')[1])
-                with open(re.sub(r'.mp3', f'_{num}.mp3', audio_file_name), 'wb') as f:
+                decode_bytes = base64.b64decode(audio.split(",")[1])
+                # Generate a unique audio file name for each audio event
+                audio_file_name = f"{audio_file_name_template}{suffix}"
+                audio_file_path = audio_data_root / audio_file_name
+                with open(audio_file_path, "wb", encoding="utf-8") as f:
                     f.write(decode_bytes)
+                audio_file_paths.append(Path(audio_file_path))
+                logger.debug(f"Saved audio file: {audio_file_path}")
                 num += 1
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-except
                 logger.warning(f"Failed to decode audio data: {e}")
 
         activity_dicts_wo_sound.append(activity_events_dicts)
 
-    return activity_dicts_wo_sound
+    return activity_dicts_wo_sound, audio_file_paths
 
 
-def fetch_subject_data(
+def fetch_subject_data_for_date(
     mindlamp_data_source: MindLAMPDataSource,
     subject_id: str,
-    encryption_passphrase: str,
-    days_to_pull: int = 7,
-    timeout_s: int = 60,
-) -> Optional[bytes]:
+    mindlamp_id: str,
+    datetime_dt: datetime,
+    config_file: Path,
+    subject_mindlamp_data_root: Path,
+) -> List[DataPull]:
     """
-    Fetches data for a single subject from MindLAMP.
+    Fetch data for a subject from MindLAMP for a specific date.
+
+    This includes fetching activity and sensor events, daily audio journals.
 
     Args:
-        mindlamp_data_source (MindLAMPDataSource): The MindLAMP data source.
-        subject_id (str): The subject ID to fetch data for.
-        encryption_passphrase (str): The encryption passphrase for keystore access.
-        days_to_pull (int): Number of days of data to pull.
-        timeout_s (int): Timeout for the API request.
+        mindlamp_data_source (MindLAMPDataSource): The MindLAMP data source object.
+        subject_id (str): The subject ID.
+        mindlamp_id (str): The MindLAMP ID of the subject.
+        datetime_dt (datetime): The date for which to fetch data.
+        config_file (Path): Path to the configuration file.
+        subject_mindlamp_data_root (Path): Path to the directory where subject data will be saved.
 
     Returns:
-        Optional[bytes]: The raw data from MindLAMP, or None if fetching fails.
+        List[DataPull]: A list of data pulls for the subject.
     """
+    data_pulls: List[DataPull] = []
+    associated_files: List[File] = []
+
     project_id = mindlamp_data_source.project_id
     site_id = mindlamp_data_source.site_id
     data_source_name = mindlamp_data_source.data_source_name
 
     identifier = f"{project_id}::{site_id}::{data_source_name}::{subject_id}"
-    logger.info(f"Fetching data for {identifier}...")
 
-    try:
-        # Connect to MindLAMP
-        lamp = connect_to_mindlamp(mindlamp_data_source)
-        
-        # Calculate time range
-        ct_utc = datetime.now(pytz.timezone('UTC'))
-        ct_utc_00 = ct_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-        
-        # Collect data for the specified number of days
-        all_data = {
-            "subject_id": subject_id,
-            "project_id": project_id,
-            "site_id": site_id,
-            "data_source_name": data_source_name,
-            "fetch_timestamp": datetime.now().isoformat(),
-            "days_data": {}
-        }
-        
-        for days_from_ct in reversed(range(days_to_pull)):
-            # Calculate time range for this day
-            time_utc_00 = ct_utc_00 - timedelta(days=days_from_ct)
-            time_utc_00_ts = int(time.mktime(time_utc_00.timetuple()) * 1000)
-            time_utc_24 = time_utc_00 + timedelta(hours=24)
-            time_utc_24_ts = int(time.mktime(time_utc_24.timetuple()) * 1000)
-            
-            date_str = time_utc_00.strftime("%Y_%m_%d")
-            logger.info(f"Fetching MindLAMP data for {subject_id} on {date_str}")
-            
-            day_data = {
-                "date": date_str,
-                "timestamp_start": time_utc_00_ts,
-                "timestamp_end": time_utc_24_ts,
-                "activity_events": [],
-                "sensor_events": []
-            }
-            
-            # Get activity events
-            activity_events = get_activity_events_lamp(
-                lamp, subject_id, from_ts=time_utc_00_ts, to_ts=time_utc_24_ts
-            )
-            day_data["activity_events"] = activity_events
-            
-            # Get sensor events
-            sensor_events = get_sensor_events_lamp(
-                lamp, subject_id, from_ts=time_utc_00_ts, to_ts=time_utc_24_ts
-            )
-            day_data["sensor_events"] = sensor_events
-            
-            # Process audio data from activity events
-            if activity_events:
-                audio_file_name = f"mindlamp_{subject_id}_{date_str}_audio.mp3"
-                day_data["activity_events"] = get_audio_out_from_content(
-                    activity_events, audio_file_name
-                )
-            
-            all_data["days_data"][date_str] = day_data
-        
-        return json.dumps(all_data, indent=2, default=str).encode('utf-8')
+    connect_to_mindlamp(mindlamp_data_source, config_file)
 
-    except Exception as e:
-        logger.error(f"Failed to fetch data for {identifier}: {e}")
-        Logs(
-            log_level="ERROR",
-            log_message={
-                "event": "mindlamp_data_pull_fetch_failed",
-                "message": f"Failed to fetch data for {identifier}.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "data_source_name": data_source_name,
-                "subject_id": subject_id,
-                "error": str(e),
+    dt_in_utc = datetime_dt.astimezone(pytz.timezone("UTC"))
+    date_utc = dt_in_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    date_str = date_utc.strftime("%Y_%m_%d")
+
+    # unix timestamps in milliseconds
+    start_timestamp = int(date_utc.timestamp() * 1000)
+    end_timestamp = start_timestamp + 24 * 60 * 60 * 1000
+
+    logger.debug(f"Fetching data for {identifier} for date {date_str}...")
+    logger.debug(f"Start timestamp: {start_timestamp}, End timestamp: {end_timestamp}")
+
+    logger.debug(f"Fetching activity and sensor events for {identifier}...")
+    with Timer() as a_timer:
+        activity_events = get_activity_events_lamp(
+            mindlamp_id, from_ts=start_timestamp, to_ts=end_timestamp
+        )
+    if len(activity_events) == 0:
+        logger.debug(f"No activity events found for {identifier} on {date_str}")
+
+    logger.debug(f"Fetching sensor events for {identifier}...")
+    with Timer() as timer:
+        sensor_events = get_sensor_events_lamp(
+            mindlamp_id, from_ts=start_timestamp, to_ts=end_timestamp
+        )
+    if sensor_events:
+        sensor_file_name = f"{mindlamp_id}_{subject_id}_sensor_{date_str}.json"
+        sensor_file_path = subject_mindlamp_data_root / sensor_file_name
+        with open(sensor_file_path, "w", encoding="utf-8") as f:
+            json.dump(sensor_events, f, indent=4)
+            logger.debug(f"Saved sensor events to {sensor_file_path}")
+
+        sensors_file = File(
+            file_path=sensor_file_path,
+        )
+        associated_files.append(sensors_file)
+
+        sensor_data_pull = DataPull(
+            subject_id=subject_id,
+            data_source_name=mindlamp_data_source.data_source_name,
+            site_id=mindlamp_data_source.site_id,
+            project_id=mindlamp_data_source.project_id,
+            file_path=str(sensor_file_path),
+            file_md5=sensors_file.md5,  # type: ignore
+            pull_time_s=int(timer.duration),  # type: ignore
+            pull_metadata={
+                "mindlamp_id": mindlamp_id,
+                "mindlamp_data_type": "sensor",
+                "data_date_utc": date_utc,
             },
-        ).insert(config_file)
-        return None
+        )
+        data_pulls.append(sensor_data_pull)
+    else:
+        logger.debug(f"No sensor events found for {identifier} on {date_str}.")
+
+    if activity_events:
+        # get audio data from activity events
+        logger.debug(f"Processing audio data for {identifier}...")
+        audio_file_name_template = f"{mindlamp_id}_{subject_id}_activity_{date_str}"
+        activity_dicts_wo_sound, audio_file_paths = get_audio_out_from_content(
+            activity_dicts=activity_events,
+            audio_data_root=subject_mindlamp_data_root,
+            audio_file_name_template=audio_file_name_template,
+        )
+        activity_events = activity_dicts_wo_sound
+
+        activity_file_name = f"{mindlamp_id}_{subject_id}_activity_{date_str}.json"
+        activity_file_path = subject_mindlamp_data_root / activity_file_name
+        with open(activity_file_path, "w", encoding="utf-8") as f:
+            json.dump(activity_events, f, indent=4)
+            logger.debug(f"Saved activity events to {activity_file_path}")
+
+        activities_file = File(
+            file_path=activity_file_path,
+        )
+        associated_files.append(activities_file)
+
+        activity_data_pull = DataPull(
+            subject_id=subject_id,
+            data_source_name=mindlamp_data_source.data_source_name,
+            site_id=mindlamp_data_source.site_id,
+            project_id=mindlamp_data_source.project_id,
+            file_path=str(activity_file_path),
+            file_md5=activities_file.md5,  # type: ignore
+            pull_time_s=int(a_timer.duration),  # type: ignore
+            pull_metadata={
+                "mindlamp_id": mindlamp_id,
+                "mindlamp_data_type": "activity",
+                "data_date_utc": date_utc,
+            },
+        )
+        data_pulls.append(activity_data_pull)
+
+        for audio_file in audio_file_paths:
+            audio_file_o = File(
+                file_path=audio_file,
+            )
+            associated_files.append(audio_file_o)
+
+            audio_data_pull = DataPull(
+                subject_id=subject_id,
+                data_source_name=mindlamp_data_source.data_source_name,
+                site_id=mindlamp_data_source.site_id,
+                project_id=mindlamp_data_source.project_id,
+                file_path=str(audio_file),
+                file_md5=audio_file_o.md5,  # type: ignore
+                pull_time_s=int(a_timer.duration),  # type: ignore
+                pull_metadata={
+                    "mindlamp_id": mindlamp_id,
+                    "mindlamp_data_type": "audio_journals",
+                    "data_date_utc": date_utc,
+                },
+            )
+            data_pulls.append(audio_data_pull)
+
+        logger.debug(f"Fetched {len(audio_file_paths)} audio files for {identifier}.")
+
+    queries: List[str] = []
+    for file in associated_files:
+        file_query = file.to_sql_query()
+        queries.append(file_query)
+
+    db.execute_queries(
+        config_file=config_file,
+        queries=queries,
+    )
+
+    return data_pulls
 
 
-def save_subject_data(
-    data: bytes,
-    project_id: str,
-    site_id: str,
+def get_subject_mindlamp_id(
+    mindlamp_data_source: MindLAMPDataSource,
     subject_id: str,
-    data_source_name: str,
     config_file: Path,
-) -> Optional[tuple[Path, str]]:
+) -> Optional[str]:
     """
-    Saves the fetched subject data to the file system and records it in the database.
+    Get the MindLAMP ID for a subject.
 
     Args:
-        data (bytes): The raw data to save.
-        project_id (str): The project ID.
-        site_id (str): The site ID.
+        mindlamp_data_source (MindLAMPDataSource): The MindLAMP data source object.
         subject_id (str): The subject ID.
-        data_source_name (str): The name of the data source.
-        config_file (Path): Path to the config file.
+        config_file (Path): Path to the configuration file.
 
     Returns:
-        Optional[tuple[Path, str]]: The path to the saved file and MD5 hash, or None if saving fails.
+        Optional[str]: The MindLAMP ID for the subject, or None if not found.
     """
-    try:
-        # Define the path where the data will be stored
-        lochness_root = config.parse(config_file, 'general')['lochness_root']
-        output_dir = Path(lochness_root) / "data" / project_id / site_id / data_source_name / subject_id
-        output_dir.mkdir(parents=True, exist_ok=True)
+    subject = Subject.get(
+        project_id=mindlamp_data_source.project_id,
+        site_id=mindlamp_data_source.site_id,
+        subject_id=subject_id,
+        config_file=config_file,
+    )
 
-        timestamp = utils.get_timestamp()
-        file_name = f"{timestamp}.json"  # JSON format for MindLAMP data
-        file_path = output_dir / file_name
+    if subject:
+        return subject.subject_metadata.get("mindlamp_id", None)
 
-        with open(file_path, "wb") as f:
-            f.write(data)
-
-        # Record the file in the database
-        file_model = File(
-            file_path=file_path,
-        )
-        file_md5 = file_model.md5
-        # Insert file_model into the database
-        db.execute_queries(config_file, [file_model.to_sql_query()], show_commands=False)
-
-        Logs(
-            log_level="INFO",
-            log_message={
-                "event": "mindlamp_data_pull_save_success",
-                "message": f"Successfully saved data for {subject_id} to {file_path}.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "data_source_name": data_source_name,
-                "subject_id": subject_id,
-                "file_path": str(file_path),
-                "file_md5": file_md5 if file_md5 else None,
-            },
-        ).insert(config_file)
-        return file_path, file_md5 if file_md5 else ""
-
-    except Exception as e:
-        logger.error(f"Failed to save data for {subject_id}: {e}")
-        Logs(
-            log_level="ERROR",
-            log_message={
-                "event": "mindlamp_data_pull_save_failed",
-                "message": f"Failed to save data for {subject_id}.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "data_source_name": data_source_name,
-                "subject_id": subject_id,
-                "error": str(e),
-            },
-        ).insert(config_file)
-        return None
+    return None
 
 
-def push_to_data_sink(
-    file_path: Path,
-    file_md5: str,
-    project_id: str,
-    site_id: str,
-    config_file: Path,
-) -> Optional[DataPush]:
+def get_subject_mindlamp_data_root(
+    subject_id: str, mindlamp_data_source: MindLAMPDataSource, config_file: Path
+) -> Path:
     """
-    Pushes a file to a data sink for the given project and site.
+    Get the root directory for storing MindLAMP data for a subject.
 
     Args:
-        file_path (Path): Path to the file to push.
-        file_md5 (str): MD5 hash of the file.
-        project_id (str): The project ID.
-        site_id (str): The site ID.
-        config_file (Path): Path to the config file.
+        subject_id (str): The subject ID.
+        mindlamp_data_source (MindLAMPDataSource): The MindLAMP data source object.
+        config_file (Path): Path to the configuration file.
 
     Returns:
-        Optional[DataPush]: The data push record if successful, None otherwise.
+        Path: The root directory for storing MindLAMP data for the subject.
     """
-    try:
-        # Get data sinks for this project and site
-        sql_query = f"""
-            SELECT data_sink_id, data_sink_name, data_sink_metadata
-            FROM data_sinks
-            WHERE project_id = '{project_id}' AND site_id = '{site_id}'
-        """
-        df = db.execute_sql(config_file, sql_query)
-        
-        if df.empty:
-            logger.warning(f"No data sinks found for {project_id}::{site_id}")
-            return None
+    lochness_root: str = config.parse(config_file, "general")["lochness_root"]  # type: ignore
 
-        # For now, use the first data sink found
-        data_sink = df.iloc[0]
-        data_sink_id = data_sink['data_sink_id']
-        data_sink_name = data_sink['data_sink_name']
-        data_sink_metadata = data_sink['data_sink_metadata']
+    project_id = mindlamp_data_source.project_id
+    site_id = mindlamp_data_source.site_id
 
-        logger.info(f"Pushing {file_path} to data sink {data_sink_name}...")
+    project_name_cap = (
+        project_id[:1].upper() + project_id[1:].lower() if project_id else project_id
+    )
 
-        # Check if this is a MinIO data sink
-        if data_sink_metadata.get('keystore_name'):
-            # This is likely a MinIO data sink
-            return push_to_minio_sink(
-                file_path=file_path,
-                file_md5=file_md5,
-                data_sink_id=data_sink_id,
-                data_sink_name=data_sink_name,
-                data_sink_metadata=data_sink_metadata,
-                project_id=project_id,
-                site_id=site_id,
-                config_file=config_file,
-            )
-        else:
-            # For other data sink types, simulate upload for now
-            start_time = datetime.now()
-            time.sleep(1)  # Simulate upload time
-            end_time = datetime.now()
-            push_time_s = int((end_time - start_time).total_seconds())
+    output_dir = (
+        Path(lochness_root)
+        / project_name_cap
+        / "PHOENIX"
+        / "PROTECTED"
+        / f"{project_name_cap}{site_id}"
+        / "raw"
+        / subject_id
+        / "phone"
+    )
 
-            data_push = DataPush(
-                data_sink_id=data_sink_id,
-                file_path=str(file_path),
-                file_md5=file_md5,
-                push_time_s=push_time_s,
-                push_metadata={
-                    "data_sink_name": data_sink_name,
-                    "data_sink_metadata": data_sink_metadata,
-                    "upload_simulated": True,  # Flag to indicate this was simulated
-                },
-                push_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            )
-
-            # Insert the data push record
-            db.execute_queries(config_file, [data_push.to_sql_query()], show_commands=False)
-
-            logger.info(f"Successfully pushed {file_path} to data sink {data_sink_name}")
-            Logs(
-                log_level="INFO",
-                log_message={
-                    "event": "mindlamp_data_push_success",
-                    "message": f"Successfully pushed {file_path} to data sink {data_sink_name}.",
-                    "project_id": project_id,
-                    "site_id": site_id,
-                    "data_sink_name": data_sink_name,
-                    "file_path": str(file_path),
-                    "push_time_s": push_time_s,
-                },
-            ).insert(config_file)
-
-            return data_push
-
-    except Exception as e:
-        logger.error(f"Failed to push {file_path} to data sink: {e}")
-        Logs(
-            log_level="ERROR",
-            log_message={
-                "event": "mindlamp_data_push_failed",
-                "message": f"Failed to push {file_path} to data sink.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "file_path": str(file_path),
-                "error": str(e),
-            },
-        ).insert(config_file)
-        return None
+    return output_dir
 
 
-def push_to_minio_sink(
-    file_path: Path,
-    file_md5: str,
-    data_sink_id: int,
-    data_sink_name: str,
-    data_sink_metadata: Dict[str, Any],
-    project_id: str,
-    site_id: str,
+def get_dates_without_data(
+    subject_id: str,
+    mindlamp_ds: MindLAMPDataSource,
+    start_date: datetime,
     config_file: Path,
-) -> Optional[DataPush]:
+    end_date: Optional[datetime] = None,
+) -> Set[datetime]:
     """
-    Pushes a file to a MinIO data sink.
+    Returns a set of dates for which there is no data pull for the given subject.
 
     Args:
-        file_path (Path): Path to the file to push.
-        file_md5 (str): MD5 hash of the file.
-        data_sink_id (int): The data sink ID.
-        data_sink_name (str): The data sink name.
-        data_sink_metadata (Dict[str, Any]): The data sink metadata.
-        project_id (str): The project ID.
-        site_id (str): The site ID.
-        config_file (Path): Path to the config file.
+        subject_id (str): The subject ID.
+        mindlamp_ds (MindLAMPDataSource): The MindLAMP data source object.
+        start_date (datetime): The start date.
+        config_file (Path): Path to the configuration file.
+        end_date (Optional[datetime]): The end date. Defaults to None, which sets it to yesterday.
 
     Returns:
-        Optional[DataPush]: The data push record if successful, None otherwise.
+        Set[datetime]: A set of dates without data pulls.
     """
-    try:
-        # Extract MinIO configuration from data sink metadata
-        bucket_name = data_sink_metadata.get('bucket')
-        keystore_name = data_sink_metadata.get('keystore_name')
-        endpoint_url = data_sink_metadata.get('endpoint')
 
-        if not all([bucket_name, keystore_name, endpoint_url]):
-            logger.error(f"Missing required MinIO configuration in data sink metadata: {data_sink_metadata}")
-            return None
+    if end_date is None:
+        end_date = datetime.now(tz=pytz.UTC) - timedelta(days=1)
+        end_date = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        # Import MinIO client
-        from minio import Minio
-        from minio.error import S3Error
+    data_pulls_df = DataPull.get_data_pulls_for_subject(
+        subject_id=subject_id,
+        site_id=mindlamp_ds.site_id,
+        project_id=mindlamp_ds.project_id,
+        config_file=config_file,
+        data_source_name=mindlamp_ds.data_source_name,
+    )
+    data_pulls_df["data_date_utc"] = pd.to_datetime(
+        data_pulls_df["data_date_utc"], utc=True
+    )
 
-        # Get MinIO credentials from keystore
-        encryption_passphrase = config.parse(config_file, "general")["encryption_passphrase"]
-        keystore = KeyStore.get_by_name_and_project(
-            config_file, keystore_name, project_id, encryption_passphrase
+    all_dates = pd.date_range(start=start_date, end=end_date, freq="D", tz=pytz.UTC)
+    pulled_dates = data_pulls_df["data_date_utc"].dt.normalize().unique()
+
+    missing_dates = sorted(set(all_dates) - set(pulled_dates))
+
+    missing_dates_dt = [date.to_pydatetime() for date in missing_dates]
+    return set(missing_dates_dt)
+
+
+def fetch_subject_data(
+    mindlamp_data_source: MindLAMPDataSource,
+    subject_id: str,
+    days_to_fetch: int,
+    days_to_redownload: int,
+    config_file: Path,
+) -> List[DataPull]:
+    """
+    Fetch data for a subject from MindLAMP.
+
+    Args:
+        mindlamp_data_source (MindLAMPDataSource): The MindLAMP data source object.
+        subject_id (str): The subject ID.
+        days_to_fetch (int): Number of days to fetch data for.
+        days_to_redownload (int): Number of days to redownload data for.
+        config_file (Path): Path to the configuration file.
+
+    Returns:
+        List[DataPull]: A list of data pulls for the subject.
+    """
+    data_pulls: List[DataPull] = []
+
+    subject_mindlamp_id = get_subject_mindlamp_id(
+        mindlamp_data_source=mindlamp_data_source,
+        subject_id=subject_id,
+        config_file=config_file,
+    )
+
+    if not subject_mindlamp_id:
+        logger.warning(
+            (
+                f"MindLAMP ID not found for subject {subject_id} "
+                f"in project {mindlamp_data_source.project_id} "
+                f"and site {mindlamp_data_source.site_id}."
+            )
         )
-        if not keystore:
-            raise ValueError(f"MinIO credentials not found in keystore: {keystore_name}")
+        return data_pulls
 
-        credentials = json.loads(keystore.key_value)
-        access_key = credentials.get("access_key")
-        secret_key = credentials.get("secret_key")
+    current_dt = datetime.now(pytz.timezone("UTC"))
+    # Drop time info
+    current_dt = current_dt.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        if not all([access_key, secret_key]):
-            raise ValueError("Missing MinIO access_key or secret_key in keystore")
+    start_date = current_dt - timedelta(days=days_to_fetch)
+    end_date = current_dt
 
-        # Create MinIO client
-        client = Minio(
-            endpoint_url.replace("https://", "").replace("http://", ""),
-            access_key=access_key,
-            secret_key=secret_key,
-            secure=endpoint_url.startswith("https://"),
+    dates_to_fetch = get_dates_without_data(
+        subject_id=subject_id,
+        mindlamp_ds=mindlamp_data_source,
+        start_date=start_date,
+        end_date=end_date,
+        config_file=config_file,
+    )
+
+    dates_to_redownload = pd.date_range(
+        start=current_dt - timedelta(days=days_to_redownload),
+        end=current_dt - timedelta(days=1),
+        freq="D",
+    )
+    dates_to_redownload_set = set(date.to_pydatetime() for date in dates_to_redownload)
+
+    dates_to_download: Set[datetime] = dates_to_fetch.union(dates_to_redownload_set)
+
+    subject_mindlamp_data_root = get_subject_mindlamp_data_root(
+        subject_id=subject_id,
+        mindlamp_data_source=mindlamp_data_source,
+        config_file=config_file,
+    )
+    subject_mindlamp_data_root.mkdir(parents=True, exist_ok=True)
+
+    logger.debug(
+        f"Found {len(dates_to_download)} dates to fetch for subject {subject_id}."
+    )
+    for date_dt in sorted(dates_to_download):
+        pulls = fetch_subject_data_for_date(
+            mindlamp_data_source=mindlamp_data_source,
+            subject_id=subject_id,
+            mindlamp_id=subject_mindlamp_id,
+            datetime_dt=date_dt,
+            config_file=config_file,
+            subject_mindlamp_data_root=subject_mindlamp_data_root,
         )
+        data_pulls.extend(pulls)
 
-        # Create object name
-        object_name = f"{project_id}/{site_id}/mindlamp/{file_path.name}"
-
-        # Upload the file
-        logger.info(f"Uploading '{file_path}' to '{bucket_name}/{object_name}'...")
-        start_time = datetime.now()
-        
-        client.fput_object(
-            bucket_name,
-            object_name,
-            str(file_path),
-            content_type="application/json",
-        )
-        
-        end_time = datetime.now()
-        push_time_s = int((end_time - start_time).total_seconds())
-        logger.info(f"Upload successful. Time taken: {push_time_s} seconds.")
-
-        # Create data push record
-        data_push = DataPush(
-            data_sink_id=data_sink_id,
-            file_path=str(file_path),
-            file_md5=file_md5,
-            push_time_s=push_time_s,
-            push_metadata={
-                "object_name": object_name,
-                "bucket_name": bucket_name,
-                "endpoint_url": endpoint_url,
-                "upload_simulated": False,  # Flag to indicate this was real upload
-            },
-            push_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        )
-
-        # Insert the data push record
-        db.execute_queries(config_file, [data_push.to_sql_query()], show_commands=False)
-
-        logger.info(f"Successfully pushed {file_path} to MinIO data sink {data_sink_name}")
-        Logs(
-            log_level="INFO",
-            log_message={
-                "event": "mindlamp_data_push_success",
-                "message": f"Successfully pushed {file_path} to MinIO data sink {data_sink_name}.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "data_sink_name": data_sink_name,
-                "file_path": str(file_path),
-                "object_name": object_name,
-                "bucket_name": bucket_name,
-                "push_time_s": push_time_s,
-            },
-        ).insert(config_file)
-
-        return data_push
-
-    except S3Error as e:
-        logger.error(f"MinIO S3 Error while pushing {file_path}: {e}")
-        Logs(
-            log_level="ERROR",
-            log_message={
-                "event": "mindlamp_data_push_minio_error",
-                "message": f"MinIO S3 Error while pushing {file_path}.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "file_path": str(file_path),
-                "error": str(e),
-            },
-        ).insert(config_file)
-        return None
-    except Exception as e:
-        logger.error(f"Failed to push {file_path} to MinIO data sink: {e}")
-        Logs(
-            log_level="ERROR",
-            log_message={
-                "event": "mindlamp_data_push_failed",
-                "message": f"Failed to push {file_path} to MinIO data sink.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "file_path": str(file_path),
-                "error": str(e),
-            },
-        ).insert(config_file)
-        return None
+    return data_pulls
 
 
-def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None, push_to_sink: bool = False, days_to_pull: int = 7):
+def pull_all_data(
+    config_file: Path,
+    project_id: Optional[str] = None,
+    site_id: Optional[str] = None,
+    days_to_pull: int = 14,
+    days_to_redownload: int = 7,
+):
     """
     Main function to pull data for all active MindLAMP data sources and subjects.
     """
@@ -615,22 +600,22 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
             "message": "Starting MindLAMP data pull process.",
             "project_id": project_id,
             "site_id": site_id,
-            "push_to_sink": push_to_sink,
             "days_to_pull": days_to_pull,
         },
     ).insert(config_file)
 
-    encryption_passphrase = config.parse(config_file, 'general')['encryption_passphrase']
-
     active_mindlamp_data_sources = MindLAMPDataSource.get_all_mindlamp_data_sources(
-        config_file=config_file,
-        active_only=True
+        config_file=config_file, active_only=True
     )
 
     if project_id:
-        active_mindlamp_data_sources = [ds for ds in active_mindlamp_data_sources if ds.project_id == project_id]
+        active_mindlamp_data_sources = [
+            ds for ds in active_mindlamp_data_sources if ds.project_id == project_id
+        ]
     if site_id:
-        active_mindlamp_data_sources = [ds for ds in active_mindlamp_data_sources if ds.site_id == site_id]
+        active_mindlamp_data_sources = [
+            ds for ds in active_mindlamp_data_sources if ds.site_id == site_id
+        ]
 
     if not active_mindlamp_data_sources:
         logger.info("No active MindLAMP data sources found for data pull.")
@@ -645,12 +630,20 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
         ).insert(config_file)
         return
 
-    logger.info(f"Found {len(active_mindlamp_data_sources)} active MindLAMP data sources for data pull.")
+    logger.info(
+        "Identified "
+        f"{len(active_mindlamp_data_sources)} "
+        "active MindLAMP data sources "
+        "for data pull."
+    )
     Logs(
         log_level="INFO",
         log_message={
             "event": "mindlamp_data_pull_active_sources_found",
-            "message": f"Found {len(active_mindlamp_data_sources)} active MindLAMP data sources for data pull.",
+            "message": (
+                f"Identified {len(active_mindlamp_data_sources)} "
+                "active MindLAMP data sources for data pull."
+            ),
             "count": len(active_mindlamp_data_sources),
             "project_id": project_id,
             "site_id": site_id,
@@ -662,16 +655,25 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
         subjects_in_db = Subject.get_subjects_for_project_site(
             project_id=mindlamp_data_source.project_id,
             site_id=mindlamp_data_source.site_id,
-            config_file=config_file
+            config_file=config_file,
         )
 
         if not subjects_in_db:
-            logger.info(f"No subjects found for {mindlamp_data_source.project_id}::{mindlamp_data_source.site_id}.")
+            logger.info(
+                (
+                    "No subjects found for "
+                    f"{mindlamp_data_source.project_id}::"
+                    f"{mindlamp_data_source.site_id}."
+                )
+            )
             Logs(
                 log_level="INFO",
                 log_message={
                     "event": "mindlamp_data_pull_no_subjects",
-                    "message": f"No subjects found for {mindlamp_data_source.project_id}::{mindlamp_data_source.site_id}.",
+                    "message": (
+                        f"No subjects found for {mindlamp_data_source.project_id}::"
+                        f"{mindlamp_data_source.site_id}."
+                    ),
                     "project_id": mindlamp_data_source.project_id,
                     "site_id": mindlamp_data_source.site_id,
                     "data_source_name": mindlamp_data_source.data_source_name,
@@ -679,12 +681,17 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
             ).insert(config_file)
             continue
 
-        logger.info(f"Found {len(subjects_in_db)} subjects for {mindlamp_data_source.data_source_name}.")
+        logger.info(
+            f"Found {len(subjects_in_db)} subjects for {mindlamp_data_source.data_source_name}."
+        )
         Logs(
             log_level="INFO",
             log_message={
                 "event": "mindlamp_data_pull_subjects_found",
-                "message": f"Found {len(subjects_in_db)} subjects for {mindlamp_data_source.data_source_name}.",
+                "message": (
+                    f"Found {len(subjects_in_db)} subjects for "
+                    f"{mindlamp_data_source.data_source_name}."
+                ),
                 "count": len(subjects_in_db),
                 "project_id": mindlamp_data_source.project_id,
                 "site_id": mindlamp_data_source.site_id,
@@ -693,75 +700,35 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
         ).insert(config_file)
 
         for subject in subjects_in_db:
-            start_time = datetime.now()
-            raw_data = fetch_subject_data(
+            data_pulls = fetch_subject_data(
                 mindlamp_data_source=mindlamp_data_source,
                 subject_id=subject.subject_id,
-                encryption_passphrase=encryption_passphrase,
-                days_to_pull=days_to_pull,
+                days_to_fetch=days_to_pull,
+                days_to_redownload=days_to_redownload,
+                config_file=config_file,
             )
 
-            if raw_data:
-                result = save_subject_data(
-                    data=raw_data,
-                    project_id=subject.project_id,
-                    site_id=subject.site_id,
-                    subject_id=subject.subject_id,
-                    data_source_name=mindlamp_data_source.data_source_name,
-                    config_file=config_file,
+            if data_pulls:
+                logger.info(
+                    f"Fetched {len(data_pulls)} data pulls for subject {subject.subject_id} "
+                    f"in project {mindlamp_data_source.project_id} and site "
+                    f"{mindlamp_data_source.site_id}."
                 )
-                if result:
-                    file_path, file_md5 = result
-                    end_time = datetime.now()
-                    pull_time_s = int((end_time - start_time).total_seconds())
-
-                    data_pull = DataPull(
-                        subject_id=subject.subject_id,
-                        data_source_name=mindlamp_data_source.data_source_name,
-                        site_id=subject.site_id,
-                        project_id=subject.project_id,
-                        file_path=str(file_path),
-                        file_md5=file_md5,
-                        pull_time_s=pull_time_s,
-                        pull_metadata={
-                            "data_source_type": "mindlamp",
-                            "days_to_pull": days_to_pull,
-                            "pull_timestamp": datetime.now().isoformat(),
-                        },
-                        pull_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    )
-
-                    # Insert the data pull record
-                    db.execute_queries(config_file, [data_pull.to_sql_query()], show_commands=False)
-
-                    logger.info(f"Successfully pulled data for {subject.subject_id} from {mindlamp_data_source.data_source_name}")
-                    Logs(
-                        log_level="INFO",
-                        log_message={
-                            "event": "mindlamp_data_pull_success",
-                            "message": f"Successfully pulled data for {subject.subject_id} from {mindlamp_data_source.data_source_name}.",
-                            "project_id": subject.project_id,
-                            "site_id": subject.site_id,
-                            "data_source_name": mindlamp_data_source.data_source_name,
-                            "subject_id": subject.subject_id,
-                            "file_path": str(file_path),
-                            "pull_time_s": pull_time_s,
-                        },
-                    ).insert(config_file)
-
-                    # Push to data sink if requested
-                    if push_to_sink:
-                        push_result = push_to_data_sink(
-                            file_path=file_path,
-                            file_md5=file_md5,
-                            project_id=subject.project_id,
-                            site_id=subject.site_id,
-                            config_file=config_file,
-                        )
-                        if push_result:
-                            logger.info(f"Successfully pushed {file_path} to data sink")
-                        else:
-                            logger.warning(f"Failed to push {file_path} to data sink")
+                Logs(
+                    log_level="INFO",
+                    log_message={
+                        "event": "mindlamp_data_pull_subject_complete",
+                        "message": (
+                            f"Fetched {len(data_pulls)} data pulls for subject "
+                            f"{subject.subject_id} in project {mindlamp_data_source.project_id} "
+                            f"and site {mindlamp_data_source.site_id}."
+                        ),
+                        "subject_id": subject.subject_id,
+                        "data_source_name": mindlamp_data_source.data_source_name,
+                        "project_id": mindlamp_data_source.project_id,
+                        "site_id": mindlamp_data_source.site_id,
+                    },
+                ).insert(config_file)
 
     logger.info("MindLAMP data pull process completed.")
     Logs(
@@ -776,14 +743,15 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
 
 
 if __name__ == "__main__":
-    import argparse
-
     parser = argparse.ArgumentParser(description="Pull data from MindLAMP data sources")
-    parser.add_argument("--config", type=str, default="config.ini", help="Path to config file")
+    parser.add_argument(
+        "--config", type=str, default="config.ini", help="Path to config file"
+    )
     parser.add_argument("--project-id", type=str, help="Project ID to filter by")
     parser.add_argument("--site-id", type=str, help="Site ID to filter by")
-    parser.add_argument("--push-to-sink", action="store_true", help="Push data to data sink after pulling")
-    parser.add_argument("--days-to-pull", type=int, default=7, help="Number of days of data to pull")
+    parser.add_argument(
+        "--days-to-pull", type=int, default=7, help="Number of days of data to pull"
+    )
 
     args = parser.parse_args()
 
@@ -796,6 +764,5 @@ if __name__ == "__main__":
         config_file=config_file,
         project_id=args.project_id,
         site_id=args.site_id,
-        push_to_sink=args.push_to_sink,
         days_to_pull=args.days_to_pull,
-    ) 
+    )

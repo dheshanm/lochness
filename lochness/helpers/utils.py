@@ -2,6 +2,7 @@
 Helper functions for the pipeline
 """
 from pathlib import Path
+from datetime import datetime
 
 from rich.console import Console
 from rich.progress import (
@@ -13,6 +14,7 @@ from rich.progress import (
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
+import pandas as pd
 
 from lochness.helpers import cli
 
@@ -71,5 +73,26 @@ def get_timestamp() -> str:
     """
     Returns the current timestamp as a string in YYYYMMDD_HHMMSS format.
     """
-    from datetime import datetime
     return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def explode_col(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    """
+    Explodes the `col` column of the DataFrame.
+
+    `col` column contains a JSON object.
+
+    Args:
+        df (pd.DataFrame): DataFrame containing the `col`.
+        col (str, optional): The name of the column to explode. Defaults to "form_data".
+
+    Returns:
+        pd.DataFrame: DataFrame with the `col` column exploded.
+    """
+    df.reset_index(drop=True, inplace=True)
+    df = pd.concat(
+        [df.drop(col, axis=1), pd.json_normalize(df[col])],  # type: ignore
+        axis=1,
+    )
+
+    return df
