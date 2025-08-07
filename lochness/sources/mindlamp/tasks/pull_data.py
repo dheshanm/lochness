@@ -381,6 +381,7 @@ def fetch_subject_data_for_date(
     db.execute_queries(
         config_file=config_file,
         queries=queries,
+        show_commands=False,
     )
 
     return data_pulls
@@ -714,6 +715,16 @@ def pull_all_data(
                     f"in project {mindlamp_data_source.project_id} and site "
                     f"{mindlamp_data_source.site_id}."
                 )
+
+                queries: List[str] = [
+                    data_pull.to_sql_query() for data_pull in data_pulls
+                ]
+                db.execute_queries(
+                    config_file=config_file,
+                    queries=queries,
+                    show_commands=False,
+                )
+
                 Logs(
                     log_level="INFO",
                     log_message={
