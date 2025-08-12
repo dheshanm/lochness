@@ -48,6 +48,7 @@ PROJECT_ID = "Pronet"
 ACCESS_KEY = "your_mindlamp_access_key"
 SECRET_KEY = "your_mindlamp_secret_key"
 
+
 def insert_mindlamp_credentials():
     """
     Insert MindLAMP credentials into the keystore.

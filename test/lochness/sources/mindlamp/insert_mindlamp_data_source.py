@@ -51,6 +51,7 @@ KEYSTORE_NAME = "mindlamp_prod"
 # MindLAMP API URL
 MINDLAMP_API_URL = "https://mindlamp.example.com/api"
 
+
 def insert_mindlamp_data_source():
     """
     Insert a test MindLAMP data source into the database.
