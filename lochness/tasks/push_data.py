@@ -5,32 +5,37 @@ Pushes data from the local file system to configured data sinks.
 
 import sys
 from pathlib import Path
-import argparse
-import logging
-from typing import Any, Dict, List, Optional, cast
-from datetime import datetime
-import importlib
 
 file = Path(__file__).resolve()
 parent = file.parent
-root_dir = None
+root_dir = None  # pylint: disable=invalid-name
 for parent in file.parents:
-    if parent.name == "lochness-v2":
+    if parent.name == "lochness_v2":
         root_dir = parent
 
 sys.path.append(str(root_dir))
 
+# remove current directory from path
 try:
     sys.path.remove(str(parent))
 except ValueError:
     pass
 
-from lochness.helpers import logs, utils, db, config
+import argparse
+import logging
+from typing import Any, Dict, List, Optional
+from datetime import datetime
+
+from rich.logging import RichHandler
+
+from lochness.helpers import logs, utils, db
 from lochness.models.data_sinks import DataSink
 from lochness.models.files import File
 from lochness.models.data_push import DataPush
 from lochness.models.data_pulls import DataPull
 from lochness.models.logs import Logs
+from lochness.sinks.data_sink_i import DataSinkI
+from lochness.sinks.minio_object_store.minio_sink import MinioSink
 
 MODULE_NAME = "lochness.tasks.push_data"
 
@@ -39,72 +44,60 @@ console = utils.get_console()
 logger = logging.getLogger(MODULE_NAME)
 logargs: Dict[str, Any] = {
     "level": logging.DEBUG,
-    "format": "%(message)s",
-    # Use default handler; RichHandler removed
+    "format": "%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s",
+    # "format": "%(message)s",
+    "handlers": [RichHandler(rich_tracebacks=True)],
 }
 logging.basicConfig(**logargs)
 
 
-def push_file_to_sink(file_obj: File,
-                      modality: str,
-                      dataSink: DataSink,
-                      data_source_name: str,
-                      project_id: str,
-                      site_id: str,
-                      subject_id: str,
-                      config_file: Path,
-                      encryption_passphrase: str) -> bool:
+def push_file_to_sink(
+    file_obj: File,
+    data_sink: DataSink,
+    data_source_name: str,
+    project_id: str,
+    site_id: str,
+    modality: str,
+    subject_id: str,
+    config_file: Path,
+) -> bool:
     """
     Dispatches the file push to the appropriate sink-specific handler.
     Only pushes if the file (by path and md5) has not already been
     pushed to this sink.
     """
-    data_sink_id = dataSink.get_data_sink_id(config_file)
-    sink_type = dataSink.data_sink_metadata.get("type")
+    data_sink_id = data_sink.get_data_sink_id(config_file)
+    sink_type = data_sink.data_sink_metadata.get("type")
     if not sink_type:
-        msg = f"Data sink {dataSink.data_sink_name} " \
-              "has no 'type' defined in its metadata."
+        msg = (
+            f"Data sink {data_sink.data_sink_name} "
+            "has no 'type' defined in its metadata."
+        )
         logger.error(msg)
-        Logs(log_level="ERROR",
-             log_message={
-                 "event": "data_push_missing_sink_type",
-                 "message": msg,
-                 "data_sink_name": dataSink.data_sink_name,
-                 "project_id": dataSink.project_id,
-                 "site_id": dataSink.site_id,
-                 },
-             ).insert(config_file)
-        return False
-
-
-    if dataSink.is_file_already_pushed(config_file,
-                                       file_obj.file_path,
-                                       file_obj.md5):
-        msg = f"File {file_obj.file_name} (md5={file_obj.md5}) already " \
-              f"pushed to {dataSink.data_sink_name}, skipping."
-        logger.info(msg)
         Logs(
-            log_level="INFO",
+            log_level="ERROR",
             log_message={
-                "event": "data_push_already_exists",
+                "event": "data_push_missing_sink_type",
                 "message": msg,
-                "file_path": file_obj.file_path,
-                "data_sink_name": dataSink.data_sink_name,
-                "project_id": dataSink.project_id,
-                "site_id": dataSink.site_id,
+                "data_sink_name": data_sink.data_sink_name,
+                "project_id": data_sink.project_id,
+                "site_id": data_sink.site_id,
             },
         ).insert(config_file)
-        return True  # Not an error, just skip
+        return False
 
     try:
-        # Dynamically import the push module for the sink type
-        # e.g., lochness.sinks.minio.push
-        push_module = importlib.import_module(f"lochness.sinks.{sink_type}.push")
-        
+        data_sink_i: Optional[DataSinkI] = None
+        if sink_type == "minio":
+            data_sink_i = MinioSink(data_sink=data_sink)
+            data_sink_i.data_sink = data_sink
+
+        if data_sink_i is None:
+            raise ModuleNotFoundError
+
         start_time = datetime.now()
-        success = push_module.push_file(
-            file_path=file_obj.file_path,
-            data_sink=dataSink,
+        success = data_sink_i.push(
+            file_to_push=file_obj.file_path,
             config_file=config_file,
             push_metadata={
                 "data_source_name": data_source_name,
@@ -112,10 +105,9 @@ def push_file_to_sink(file_obj: File,
                 "site_id": site_id,
                 "project_id": project_id,
                 "file_name": file_obj.file_name,
-                "file_size_mb": file_obj.file_size_mb,
-                "modality": modality
+                "file_size_mb": file_obj.file_size_mb,  # type: ignore
+                "modality": modality,
             },
-            encryption_passphrase=encryption_passphrase,
         )
         end_time = datetime.now()
         push_time_s = int((end_time - start_time).total_seconds())
@@ -124,31 +116,25 @@ def push_file_to_sink(file_obj: File,
             # Record successful push in data_pushes table
             data_push = DataPush(
                 file_path=str(file_obj.file_path),
-                file_md5=file_obj.md5,
-                data_sink_id=data_sink_id,
-                site_id=dataSink.site_id,
-                project_id=dataSink.project_id,
+                file_md5=file_obj.md5,  # type: ignore
+                data_sink_id=data_sink_id,  # type: ignore
                 push_time_s=push_time_s,
                 push_timestamp=datetime.now().isoformat(),
-                push_metadata={
-                    "sink_type": sink_type,
-                    "file_size_mb": file_obj.file_size_mb,
-                    "destination_path": "TODO: Get actual destination path from sink handler",
-                },
+                push_metadata={},
             )
-            db.execute_queries(config_file,
-                               [data_push.to_sql_query()],
-                               show_commands=False)
+            db.execute_queries(
+                config_file, [data_push.to_sql_query()], show_commands=False
+            )
 
             Logs(
                 log_level="INFO",
                 log_message={
                     "event": "data_push_success",
-                    "message": f"Successfully pushed {file_obj.file_name} to {dataSink.data_sink_name}.",
+                    "message": f"Successfully pushed {file_obj.file_name} to {data_sink.data_sink_name}.",
                     "file_path": str(file_obj.file_path),
-                    "data_sink_name": dataSink.data_sink_name,
-                    "project_id": dataSink.project_id,
-                    "site_id": dataSink.site_id,
+                    "data_sink_name": data_sink.data_sink_name,
+                    "project_id": data_sink.project_id,
+                    "site_id": data_sink.site_id,
                     "push_time_s": push_time_s,
                 },
             ).insert(config_file)
@@ -158,11 +144,11 @@ def push_file_to_sink(file_obj: File,
                 log_level="ERROR",
                 log_message={
                     "event": "data_push_failed",
-                    "message": f"Failed to push {file_obj.file_name} to {dataSink.data_sink_name}.",
+                    "message": f"Failed to push {file_obj.file_name} to {data_sink.data_sink_name}.",
                     "file_path": str(file_obj.file_path),
-                    "data_sink_name": dataSink.data_sink_name,
-                    "project_id": dataSink.project_id,
-                    "site_id": dataSink.site_id,
+                    "data_sink_name": data_sink.data_sink_name,
+                    "project_id": data_sink.project_id,
+                    "site_id": data_sink.site_id,
                 },
             ).insert(config_file)
             return False
@@ -175,24 +161,26 @@ def push_file_to_sink(file_obj: File,
                 "event": "data_push_handler_not_found",
                 "message": f"No push handler found for sink type: {sink_type}.",
                 "sink_type": sink_type,
-                "data_sink_name": dataSink.data_sink_name,
+                "data_sink_name": data_sink.data_sink_name,
             },
         ).insert(config_file)
         return False
 
-    except Exception as e:
-        logger.error(f"Error pushing file {file_obj.file_name} to {dataSink.data_sink_name}: {e}")
-        Logs(
-            log_level="ERROR",
-            log_message={
-                "event": "data_push_exception",
-                "message": f"Exception during push of {file_obj.file_name} to {dataSink.data_sink_name}.",
-                "file_path": str(file_obj.file_path),
-                "data_sink_name": dataSink.data_sink_name,
-                "error": str(e),
-            },
-        ).insert(config_file)
-        return False
+    # except Exception as e:  # pylint: disable=broad-except
+    #     logger.error(
+    #         f"Error pushing file {file_obj.file_name} to {data_sink.data_sink_name}: {e}"
+    #     )
+    #     Logs(
+    #         log_level="ERROR",
+    #         log_message={
+    #             "event": "data_push_exception",
+    #             "message": f"Exception during push of {file_obj.file_name} to {data_sink.data_sink_name}.",
+    #             "file_path": str(file_obj.file_path),
+    #             "data_sink_name": data_sink.data_sink_name,
+    #             "error": str(e),
+    #         },
+    #     ).insert(config_file)
+    #     return False
 
 
 def simple_push_file_to_sink(file_path: Path):
@@ -215,39 +203,66 @@ def simple_push_file_to_sink(file_path: Path):
 
     file_obj = File.get_most_recent_file_obj(config_file, file_path)
 
-    dataPull = DataPull.get_most_recent_data_pull(config_file,
-                                                  file_obj.file_path,
-                                                  file_obj.md5)
+    if file_obj is None:
+        raise FileNotFoundError(f"File {file_path} not found in the database.")
 
-    dataSink = DataSink.get_matching_data_sink(
-            config_file=config_file,
-            site_id=dataPull.site_id,
-            project_id=dataPull.project_id
-            )
+    data_pull = DataPull.get_most_recent_data_pull(
+        config_file, str(file_obj.file_path), file_obj.md5  # type: ignore
+    )
 
-    encryption_passphrase = config.parse(config_file, 'general')[
-            'encryption_passphrase']
-    
-    result = push_file_to_sink(file_obj=file_obj,
-                               modality=file_obj.modality,
-                               dataSink=dataSink,
-                               data_source_name='main_redcap',
-                               project_id=dataPull.project_id,
-                               site_id=dataPull.site_id,
-                               subject_id=dataPull.subject_id,
-                               config_file=config_file,
-                               encryption_passphrase=encryption_passphrase)
+    if data_pull is None:
+        raise ValueError(
+            f"No data pull associated with file {file_obj.file_name} (md5={file_obj.md5})."
+        )
+
+    data_sink = DataSink.get_matching_data_sink(
+        config_file=config_file,
+        site_id=data_pull.site_id,
+        project_id=data_pull.project_id,
+    )
+
+    if data_sink is None:
+        raise ValueError(
+            f"No matching data sink found for site {data_pull.site_id} "
+            f"and project {data_pull.project_id}."
+        )
+
+    result = push_file_to_sink(
+        file_obj=file_obj,
+        modality="unknown",
+        data_sink=data_sink,
+        data_source_name="unknown",
+        project_id=data_pull.project_id,
+        site_id=data_pull.site_id,
+        subject_id=data_pull.subject_id,
+        config_file=config_file,
+    )
     return result
 
 
-def get_matching_dataSink_list(config_file: Path, project_id: str, site_id: str) -> List[DataSink]:
+def get_matching_data_sink_list(
+    config_file: Path, project_id: Optional[str], site_id: Optional[str]
+) -> List[DataSink]:
+    """
+    Retrieves a list of active data sinks based on the provided project and site IDs.
+
+    Args:
+        config_file (Path): Path to the configuration file.
+        project_id (Optional[str]): Project ID to filter data sinks.
+        site_id (Optional[str]): Site ID to filter data sinks.
+
+    Returns:
+        List[DataSink]: A list of active DataSink objects that match the criteria.
+    """
     active_data_sinks = DataSink.get_all_data_sinks(
         config_file=config_file,
-        active_only=True # Assuming a method to get active sinks exists
+        active_only=True,
     )
 
     if project_id:
-        active_data_sinks = [ds for ds in active_data_sinks if ds.project_id == project_id]
+        active_data_sinks = [
+            ds for ds in active_data_sinks if ds.project_id == project_id
+        ]
     if site_id:
         active_data_sinks = [ds for ds in active_data_sinks if ds.site_id == site_id]
 
@@ -264,7 +279,9 @@ def get_matching_dataSink_list(config_file: Path, project_id: str, site_id: str)
         ).insert(config_file)
         return []
 
-    logger.info(f"Found {len(active_data_sinks)} active data sinks.")
+    logger.info(
+        f"Found {len(active_data_sinks)} active data sinks for {project_id}::{site_id}."
+    )
     Logs(
         log_level="INFO",
         log_message={
@@ -279,99 +296,176 @@ def get_matching_dataSink_list(config_file: Path, project_id: str, site_id: str)
     return active_data_sinks
 
 
-def push_all_data(config_file: Path,
-                  project_id: str = None,
-                  site_id: str = None) -> None:
+def push_all_data(config_file: Path, project_id: str, site_id: str) -> None:
     """
-    Main function to push data to all active data sinks.
-    """
-    Logs(log_level="INFO",
-         log_message={
-             "event": "data_push_start",
-             "message": "Starting data push process.",
-             "project_id": project_id,
-             "site_id": site_id}).insert(config_file)
+    Function to push data to all active data sinks.
 
-    active_data_sinks = get_matching_dataSink_list(config_file, project_id, site_id)
-    if active_data_sinks == []:
-        return
-    
-    files_to_push = File.get_files_to_push(
-            config_file,
-            project_id,
-            site_id)
-    if files_to_push == []:
-        logger.info("No files found to push.")
-        Logs(log_level="INFO",
-             log_message={
-                 "event": "data_push_no_files_to_push",
-                 "message": "No files found in the database to push.",
-                 "project_id": project_id,
-                 "site_id": site_id}).insert(config_file)
+    Args:
+        config_file (Path): Path to the configuration file.
+        project_id (str): Project ID to filter data sinks.
+        site_id (str): Site ID to filter data sinks.
+
+    Returns:
+        None
+    """
+    Logs(
+        log_level="INFO",
+        log_message={
+            "event": "data_push_start",
+            "message": "Starting data push process.",
+            "project_id": project_id,
+            "site_id": site_id,
+        },
+    ).insert(config_file)
+
+    active_data_sinks = get_matching_data_sink_list(config_file, project_id, site_id)
+    if not active_data_sinks:
+        logger.info("No active data sinks found, skipping data push.")
         return
 
-    logger.info(f"Found {len(files_to_push)} files to push.")
-    Logs(log_level="INFO",
-         log_message={
-             "event": "data_push_files_found",
-             "message": f"Found {len(files_to_push)} files to push.",
-             "count": len(files_to_push),
-             "project_id": project_id,
-             "site_id": site_id}).insert(config_file)
+    for active_data_sink in active_data_sinks:
+        data_sink_id: int = active_data_sink.get_data_sink_id(config_file)  # type: ignore
 
-    encryption_passphrase = config.parse(
-            config_file, 'general')['encryption_passphrase']
+        logger.debug(
+            f"Processing data sink: {data_sink_id} "
+            f"(Project ID: {active_data_sink.project_id}, Site ID: {active_data_sink.site_id})"
+        )
 
-    for file_obj in files_to_push:
-        for dataSink in active_data_sinks:
-            logger.info(f"Attempting to push {file_obj.file_name} to "
-                        f"{dataSink.data_sink_name}...")
-            push_file_to_sink(
-                    file_obj=file_obj,
-                    modality=file_obj.modality,
-                    dataSink=dataSink,
-                    data_source_name=file_obj.data_source_name,
-                    project_id=file_obj.project_id,
-                    site_id=file_obj.site_id,
-                    subject_id=file_obj.subject_id,
+        files_to_push = File.get_files_to_push(
+            config_file=config_file,
+            project_id=project_id,
+            site_id=site_id,
+            data_sink_id=data_sink_id,
+        )
+        if not files_to_push:
+            logger.info("No files found to push.")
+            Logs(
+                log_level="INFO",
+                log_message={
+                    "event": "data_push_no_files_to_push",
+                    "message": "No files found in the database to push.",
+                    "project_id": project_id,
+                    "site_id": site_id,
+                    "data_sink_name": active_data_sink.data_sink_name,
+                    "data_sink_id": data_sink_id,
+                },
+            ).insert(config_file)
+            return
+
+        logger.info(f"Found {len(files_to_push)} files to push.")
+        Logs(
+            log_level="INFO",
+            log_message={
+                "event": "data_push_files_found_to_push",
+                "message": f"Found {len(files_to_push)} files to push.",
+                "count": len(files_to_push),
+                "project_id": project_id,
+                "site_id": site_id,
+                "data_sink_name": active_data_sink.data_sink_name,
+                "data_sink_id": data_sink_id,
+            },
+        ).insert(config_file)
+
+        for file_obj in files_to_push:
+            for data_sink in active_data_sinks:
+                logger.info(
+                    f"Attempting to push {file_obj.file_name} to "
+                    f"{data_sink.data_sink_name}..."
+                )
+
+                associated_data_pull = File.get_recent_data_pull(
                     config_file=config_file,
-                    encryption_passphrase=encryption_passphrase,
-            )
+                    file_path=file_obj.file_path,
+                )
 
-    Logs(log_level="INFO",
-         log_message={
-             "event": "data_push_complete",
-             "message": "Finished data push process.",
-             "project_id": project_id,
-             "site_id": site_id}
-         ).insert(config_file)
+                if associated_data_pull is None:
+                    logger.warning(
+                        f"No associated data pull found for file {file_obj.file_name}."
+                    )
+                    Logs(
+                        log_level="WARNING",
+                        log_message={
+                            "event": "data_push_no_associated_data_pull",
+                            "message": f"No associated data pull found for file {file_obj.file_name}.",
+                            "file_path": str(file_obj.file_path),
+                            "data_sink_name": data_sink.data_sink_name,
+                            "project_id": project_id,
+                            "site_id": site_id,
+                        },
+                    ).insert(config_file)
+                    subject_id = "unknown"
+                    associated_modality = "unknown"
+                    associated_data_source_name = "unknown"
+                else:
+                    associated_data_source = (
+                        associated_data_pull.get_associated_data_source(
+                            config_file=config_file
+                        )
+                    )
+                    subject_id = associated_data_pull.subject_id
+                    associated_data_source_name = (
+                        associated_data_source.data_source_name
+                    )
+                    associated_modality = associated_data_source.data_source_metadata.get(
+                        "modality", "unknown"
+                    )
+
+                push_file_to_sink(
+                    file_obj=file_obj,
+                    data_sink=data_sink,
+                    data_source_name=associated_data_source_name,
+                    modality=associated_modality,
+                    project_id=project_id,
+                    site_id=site_id,
+                    subject_id=subject_id,
+                    config_file=config_file,
+                )
+
+        Logs(
+            log_level="INFO",
+            log_message={
+                "event": "data_push_complete",
+                "message": "Finished data push process.",
+                "project_id": project_id,
+                "site_id": site_id,
+                "data_sink_name": active_data_sink.data_sink_name,
+                "data_sink_id": data_sink_id,
+            },
+        ).insert(config_file)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Push data to all or specific data sinks.")
-    parser.add_argument('--project_id', type=str, default=None, help='Project ID to push data for (optional)')
-    parser.add_argument('--site_id', type=str, default=None, help='Site ID to push data for (optional)')
+    parser = argparse.ArgumentParser(
+        description="Push data to all or specific data sinks."
+    )
+    parser.add_argument(
+        "--project_id",
+        type=str,
+        required=True,
+        help="Project ID to push data for (optional)",
+    )
+    parser.add_argument(
+        "--site_id", type=str, required=True, help="Site ID to push data for (optional)"
+    )
     args = parser.parse_args()
 
     config_file = utils.get_config_file_path()
+    if not config_file.exists():
+        logger.error(f"Configuration file {config_file} does not exist.")
+        sys.exit(1)
+
     logs.configure_logging(
         config_file=config_file, module_name=MODULE_NAME, logger=logger
     )
 
     logger.info("Starting data push...")
+    logger.debug(f"Using configuration file: {config_file}")
 
-    if not config_file.exists():
-        logger.error(f"Config file does not exist: {config_file}")
-        Logs(
-            log_level="FATAL",
-            log_message={
-                "event": "data_push_config_missing",
-                "message": f"Config file does not exist: {config_file}",
-                "config_file_path": str(config_file),
-            },
-        ).insert(config_file)
-        sys.exit(1)
+    project_id: str = args.project_id
+    site_id: str = args.site_id
 
-    push_all_data(config_file=config_file, project_id=args.project_id, site_id=args.site_id)
+    logger.debug(f"Project ID: {project_id}, Site ID: {site_id}")
+
+    push_all_data(config_file=config_file, project_id=project_id, site_id=site_id)
 
     logger.info("Finished data push.")

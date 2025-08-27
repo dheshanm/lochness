@@ -165,7 +165,7 @@ class DataSink(BaseModel):
 
         return data_sink
 
-    def get_data_sink_id(self, config_file) -> str:
+    def get_data_sink_id(self, config_file: Path) -> Optional[int]:
         """
         Get the data sink ID for the current data sink.
 
@@ -174,16 +174,23 @@ class DataSink(BaseModel):
         Returns:
             str: The data sink ID.
         """
+
         query = f"""
-            SELECT data_sink_id FROM data_sinks
+            SELECT data_sink_id
+            FROM data_sinks
             WHERE
               data_sink_name = '{self.data_sink_name}'
               AND site_id = '{self.site_id}'
               AND project_id = '{self.project_id}'
             LIMIT 1;
             """
-        data_sink_id = db.execute_sql(config_file, query)
-        return data_sink_id.iloc[0]["data_sink_id"]
+
+        data_sink_id = db.fetch_record(config_file=config_file, query=query)
+
+        if data_sink_id is None:
+            return None
+
+        return int(data_sink_id)
 
     def is_file_already_pushed(
         self, config_file: Path, file_path: Path, md5: str
