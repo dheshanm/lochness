@@ -119,7 +119,10 @@ class Subject(BaseModel):
             raise ValueError(
                 f"No subject found with ID {subject_id} in project {project_id} and site {site_id}."
             )
-
+        if len(subject_df) > 1:
+            raise ValueError(
+                f"More than one subject found with ID {subject_id} in project {project_id} and site {site_id}."
+            )
         row = subject_df.iloc[0]
         return Subject(
             subject_id=row["subject_id"],
