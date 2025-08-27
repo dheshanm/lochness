@@ -2,10 +2,13 @@
 DataPull Model
 """
 
-from typing import Dict, Any
-from pydantic import BaseModel
+from typing import Dict, Any, Optional
+from pathlib import Path
 
-from lochness.helpers import db
+from pydantic import BaseModel
+import pandas as pd
+
+from lochness.helpers import db, utils
 
 
 class DataPull(BaseModel):
@@ -94,22 +97,29 @@ class DataPull(BaseModel):
         """
         Returns a user-friendly string representation of the DataPull object.
         """
-        return (f"DataPull(subject_id={self.subject_id}, data_source_name={self.data_source_name}, "
-                f"site_id={self.site_id}, project_id={self.project_id}, file_path={self.file_path}, "
-                f"file_md5={self.file_md5}, pull_time_s={self.pull_time_s}, pull_metadata={self.pull_metadata})")
+        return (
+            f"DataPull("
+            f"subject_id={self.subject_id}, "
+            f"data_source_name={self.data_source_name}, "
+            f"site_id={self.site_id}, "
+            f"project_id={self.project_id}, "
+            f"file_path={self.file_path}, "
+            f"file_md5={self.file_md5}, "
+            f"pull_time_s={self.pull_time_s}, "
+            f"pull_metadata={self.pull_metadata}"
+            f")"
+        )
 
     def __repr__(self) -> str:
         """
         Returns a detailed string representation of the DataPull object for debugging.
         """
-        return (f"<DataPull(subject_id='{self.subject_id}', data_source_name='{self.data_source_name}', "
-                f"site_id='{self.site_id}', project_id='{self.project_id}', file_path='{self.file_path}', "
-                f"file_md5='{self.file_md5}', pull_time_s={self.pull_time_s}, pull_metadata={self.pull_metadata})>")
+        return self.__str__()
 
     @staticmethod
-    def get_most_recent_data_pull(config_file: str,
-                                  file_path: str,
-                                  file_md5: str) -> 'DataPull':
+    def get_most_recent_data_pull(
+        config_file: Path, file_path: str, file_md5: str
+    ) -> Optional["DataPull"]:
         """
         Returns the most recent data_pull record for the given
         file_path and file_md5.
@@ -129,24 +139,24 @@ class DataPull(BaseModel):
             ORDER BY pull_timestamp DESC
             LIMIT 1;
         """
-        
+
         sql_query = db.handle_null(sql_query)
         result_df = db.execute_sql(config_file, sql_query)
 
         if result_df.empty:
             return None
-        
+
         row = result_df.iloc[0]
-        
+
         return DataPull(
-            subject_id=row['subject_id'],
-            data_source_name=row['data_source_name'],
-            site_id=row['site_id'],
-            project_id=row['project_id'],
-            file_path=row['file_path'],
-            file_md5=row['file_md5'],
-            pull_time_s=row['pull_time_s'],
-            pull_metadata=row['pull_metadata']
+            subject_id=row["subject_id"],
+            data_source_name=row["data_source_name"],
+            site_id=row["site_id"],
+            project_id=row["project_id"],
+            file_path=row["file_path"],
+            file_md5=row["file_md5"],
+            pull_time_s=row["pull_time_s"],
+            pull_metadata=row["pull_metadata"],
         )
 
     def delete_record_query(self) -> str:
@@ -159,3 +169,38 @@ class DataPull(BaseModel):
           AND file_path = '{self.file_path}'
           AND file_md5 = '{self.file_md5}';"""
         return query
+
+    @staticmethod
+    def get_data_pulls_for_subject(
+        config_file: Path,
+        subject_id: str,
+        site_id: str,
+        project_id: str,
+        data_source_name: str,
+    ) -> pd.DataFrame:
+        """
+        Retrieve all data pulls for a specific subject and data source.
+
+        Args:
+            config_file (str): Path to the database configuration file.
+            subject_id (str): Subject identifier.
+            site_id (str): Site identifier.
+            project_id (str): Project identifier.
+            data_source_name (str): Data source name.
+
+        Returns:
+            pd.DataFrame: DataFrame containing all matching data pulls.
+        """
+        sql_query = f"""
+            SELECT * FROM data_pull
+            WHERE subject_id = '{subject_id}'
+              AND site_id = '{site_id}'
+              AND project_id = '{project_id}'
+              AND data_source_name = '{data_source_name}'
+            ORDER BY pull_timestamp DESC;
+        """
+
+        result_df = db.execute_sql(config_file, sql_query)
+        result_df = utils.explode_col(result_df, "pull_metadata")
+
+        return result_df

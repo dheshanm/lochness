@@ -2,9 +2,10 @@
 Subject Model
 """
 
-from typing import Dict, Any, List
-from pydantic import BaseModel
 from pathlib import Path
+from typing import Any, Dict, List
+
+from pydantic import BaseModel
 
 from lochness.helpers import db
 
@@ -90,7 +91,50 @@ class Subject(BaseModel):
         return sql_query
 
     @staticmethod
-    def get_subjects_for_project_site(project_id: str, site_id: str, config_file: Path) -> List["Subject"]:
+    def get(
+        project_id: str, site_id: str, subject_id: str, config_file: Path
+    ) -> "Subject":
+        """
+        Retrieves a subject by its ID from the database.
+
+        Args:
+            project_id (str): The project ID.
+            site_id (str): The site ID.
+            subject_id (str): The subject ID.
+            config_file (Path): Path to the configuration file.
+
+        Returns:
+            Subject: The retrieved Subject object.
+        """
+        query = f"""
+        SELECT *
+        FROM subjects
+        WHERE project_id = '{project_id}' AND
+            site_id = '{site_id}' AND
+            subject_id = '{subject_id}';
+        """
+        subject_df = db.execute_sql(config_file, query)
+
+        if subject_df.empty:
+            raise ValueError(
+                f"No subject found with ID {subject_id} in project {project_id} and site {site_id}."
+            )
+        if len(subject_df) > 1:
+            raise ValueError(
+                f"More than one subject found with ID {subject_id} in project {project_id} and site {site_id}."
+            )
+        row = subject_df.iloc[0]
+        return Subject(
+            subject_id=row["subject_id"],
+            site_id=row["site_id"],
+            project_id=row["project_id"],
+            subject_metadata=row["subject_metadata"],
+        )
+
+    @staticmethod
+    def get_subjects_for_project_site(
+        project_id: str, site_id: str, config_file: Path
+    ) -> List["Subject"]:
         """
         Retrieves subjects for a given project and site from the database.
 
@@ -102,7 +146,13 @@ class Subject(BaseModel):
         Returns:
             List[Subject]: A list of Subject objects.
         """
-        query = f"SELECT subject_id, site_id, project_id, subject_metadata FROM subjects WHERE project_id = '{project_id}' AND site_id = '{site_id}';"
+        query = f"""
+        SELECT
+            subject_id, site_id, project_id, subject_metadata
+        FROM subjects
+        WHERE project_id = '{project_id}' AND
+            site_id = '{site_id}';
+        """
         subjects_df = db.execute_sql(config_file, query)
 
         subjects: List[Subject] = []
@@ -118,6 +168,8 @@ class Subject(BaseModel):
 
     def delete_record_query(self) -> str:
         """Generate a query to delete a record from the table"""
-        query = f"""DELETE FROM subjects
-        WHERE subject_id = '{self.subject_id}';"""
+        query = f"""
+        DELETE FROM subjects
+        WHERE subject_id = '{self.subject_id}';
+        """
         return query

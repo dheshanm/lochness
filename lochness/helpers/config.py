@@ -24,13 +24,13 @@ def parse(path: Path, section: str) -> Dict[str, str | bool]:
     parser = ConfigParser()
     parser.read(path)
 
-    conf: Dict[str, str] = {}
+    conf: Dict[str, str | bool] = {}
     if parser.has_section(section):
         params = parser.items(section)
         for param in params:
-            if param[1].lower() == 'true':
+            if param[1].lower() == "true":
                 conf[param[0]] = True
-            elif param[1].lower() == 'false':
+            elif param[1].lower() == "false":
                 conf[param[0]] = False
             else:
                 conf[param[0]] = param[1]
@@ -38,3 +38,17 @@ def parse(path: Path, section: str) -> Dict[str, str | bool]:
         raise ValueError(f"Section {section} not found in the {path} file")
 
     return conf
+
+
+def get_encryption_passphrase(config_file: Path) -> str:
+    """
+    Get the encryption passphrase from the configuration file.
+    Args:
+        config_file (Path): The path to the configuration file.
+    Returns:
+        str: The encryption passphrase.
+    """
+    passphrase: str = parse(config_file, "general")[
+        "encryption_passphrase"
+    ]  # type: ignore[assignment]
+    return passphrase

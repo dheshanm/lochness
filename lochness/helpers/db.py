@@ -97,12 +97,13 @@ def get_db_credentials(config_file: Path, db: str = "postgresql") -> Dict[str, s
     db_params = config.parse(path=config_file, section=db)
 
     if "key_file" in db_params:
-        key_file = Path(db_params["key_file"])
+        key_file_str: str = db_params["key_file"]  # type: ignore
+        key_file = Path(key_file_str)
         credentials = config.parse(path=key_file, section=db)
     else:
         credentials = db_params
 
-    return credentials
+    return credentials  # type: ignore
 
 
 @no_type_check
@@ -138,8 +139,6 @@ def execute_queries(
 
     try:
         credentials = get_db_credentials(config_file=config_file, db=db)
-        masked_credentials = {key: (value if key != "password" else "***") for key, value in credentials.items()}
-        logger.debug(f"Database credentials: {masked_credentials}")
         conn: psycopg2.extensions.connection = psycopg2.connect(**credentials)
         cur = conn.cursor()
 
@@ -173,15 +172,20 @@ def execute_queries(
             logger.debug(
                 f"[grey]Executed {len(queries)} SQL query(ies).", extra={"markup": True}
             )
-    except (Exception, psycopg2.DatabaseError) as e:
+    except (Exception, psycopg2.DatabaseError) as e:  # pylint: disable=broad-except
         logger.error("[bold red]Error executing queries.", extra={"markup": True})
         if command is not None:
             logger.error(f"[red]For query: {command}", extra={"markup": True})
         logger.error(e)
 
         # Check for specific connection error related to hostname resolution
-        if isinstance(e, psycopg2.OperationalError) and "could not translate host name" in str(e):
-            logger.error("[bold yellow]HINT: This error often indicates a network issue, such as an incorrect hostname or a missing VPN connection. Please ensure your VPN is connected if required.", extra={"markup": True})
+        if isinstance(
+            e, psycopg2.OperationalError
+        ) and "could not translate host name" in str(e):
+            logger.error(
+                "HINT: This error often indicates a network issue.",
+                extra={"markup": True},
+            )
 
         if on_failure is not None:
             on_failure()

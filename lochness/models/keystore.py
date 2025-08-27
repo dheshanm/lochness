@@ -2,11 +2,11 @@
 KeyStore class for managing API keys and secrets.
 """
 
-from __future__ import annotations
-from typing import Dict, List
+from pathlib import Path
+from typing import Dict, List, Optional, Any
 from pydantic import BaseModel
 
-from lochness.helpers import db
+from lochness.helpers import db, config
 
 
 class KeyStore(BaseModel):
@@ -18,7 +18,7 @@ class KeyStore(BaseModel):
     key_value: str
     key_type: str
     project_id: str
-    key_metadata: Dict[str, str] = {}
+    key_metadata: Dict[str, Any] = {}
 
     @staticmethod
     def init_db_table_query() -> List[str]:
@@ -60,7 +60,7 @@ class KeyStore(BaseModel):
         key_value = db.sanitize_string(self.key_value)
         key_type = db.sanitize_string(self.key_type)
         key_metadata = db.sanitize_json(self.key_metadata)
-    
+
         sql = f"""
         INSERT INTO key_store (
             key_name,
@@ -82,7 +82,9 @@ class KeyStore(BaseModel):
         return sql
 
     @staticmethod
-    def retrieve_key_query(key_name: str, project_id: str, encryption_passphrase: str) -> str:
+    def retrieve_key_query(
+        key_name: str, project_id: str, encryption_passphrase: str
+    ) -> str:
         """
         Returns the SQL query to retrieve a key from the database for a specific project.
         """
@@ -96,7 +98,7 @@ class KeyStore(BaseModel):
         return sql
 
     @staticmethod
-    def retrieve_key_metadata(key_name: str, project_id: str) -> dict:
+    def retrieve_key_metadata(key_name: str, project_id: str) -> str:
         """
         Returns the SQL query to retrieve a key from the database for a specific project.
         """
@@ -109,6 +111,48 @@ class KeyStore(BaseModel):
         return sql
 
     @staticmethod
+    def retrieve_keystore(
+        key_name: str,
+        project_id: str,
+        config_file: Path,
+    ) -> Optional["KeyStore"]:
+        """
+        Retrieves a KeyStore entry by its name and project ID.
+        """
+
+        encryption_passphrase: str = config.get_encryption_passphrase(config_file)
+
+        query = f"""
+            SELECT
+                pgp_sym_decrypt(key_value, '{encryption_passphrase}') AS key_value,
+                key_type,
+                key_metadata
+            FROM key_store
+            WHERE key_name = '{db.sanitize_string(key_name)}'
+                AND project_id = '{db.sanitize_string(project_id)}';
+        """
+
+        result_df = db.execute_sql(
+            config_file=config_file,
+            query=query,
+        )
+
+        if result_df is not None and not result_df.empty:
+            key_value_raw = result_df["key_value"].values[0]
+            key_type_raw = result_df["key_type"].values[0]
+            key_metadata_raw = result_df["key_metadata"].values[0]
+
+            return KeyStore(
+                key_name=key_name,
+                key_value=key_value_raw,
+                key_type=key_type_raw,
+                project_id=project_id,
+                key_metadata=key_metadata_raw,
+            )
+
+        return None
+
+    @staticmethod
     def get_by_name_and_project(
         config_file: Path, key_name: str, project_id: str, encryption_passphrase: str
     ) -> Optional["KeyStore"]:
@@ -116,17 +160,29 @@ class KeyStore(BaseModel):
         Retrieves a KeyStore entry by its name and project ID.
         """
         query = KeyStore.retrieve_key_query(key_name, project_id, encryption_passphrase)
-        print(query)
         key_value_raw = db.fetch_record(config_file, query)
         if key_value_raw:
-            return KeyStore(key_name=key_name, key_value=key_value_raw, key_type="", project_id=project_id)
-        return None
+
+            return KeyStore(
+                key_name=key_name,
+                key_value=key_value_raw,
+                key_type="",
+                project_id=project_id,
+            )
+        else:
+            return None
 
     def delete_record_query(self) -> str:
-        """Generate a query to delete a record from the table"""
+        """
+        Generate a query to delete a record from the table
+        """
+
         key_name = db.sanitize_string(self.key_name)
         project_id = db.sanitize_string(self.project_id)
-        query = f"""DELETE FROM key_store
+
+        query = f"""
+        DELETE FROM key_store
         WHERE key_name = '{key_name}'
-          AND project_id = '{project_id}';"""
+            AND project_id = '{project_id}';
+        """
         return query

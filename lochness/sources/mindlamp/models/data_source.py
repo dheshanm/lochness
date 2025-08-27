@@ -17,6 +17,7 @@ class MindLAMPDataSourceMetadata(BaseModel):
 
     keystore_name: str
     api_url: str
+    modality: str = 'phone'
 
 
 class MindLAMPDataSource(BaseModel):
@@ -86,4 +87,4 @@ class MindLAMPDataSource(BaseModel):
             mindlamp_data_source = convert_to_mindlamp_data_source(row.to_dict())  # type: ignore
             mindlamp_data_sources.append(mindlamp_data_source)
 
-        return mindlamp_data_sources 
+        return mindlamp_data_sources
