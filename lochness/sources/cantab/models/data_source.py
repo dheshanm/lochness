@@ -16,7 +16,8 @@ class CANTABDataSourceMetadata(BaseModel):
     """
 
     keystore_name: str
-    api_endpoint: str
+    api_url: str
+    modality: str = 'cantab'
 
 
 class CANTABDataSource(BaseModel):
@@ -75,7 +76,8 @@ class CANTABDataSource(BaseModel):
                 data_source_type=row["data_source_type"],
                 data_source_metadata=CANTABDataSourceMetadata(
                     keystore_name=row["data_source_metadata"]["keystore_name"],
-                    api_endpoint=row["data_source_metadata"]["api_endpoint"],
+                    api_url=row["data_source_metadata"]["api_url"],
+                    modality=row["data_source_metadata"]["modality"],
                 ),
             )
             return cantab_data_source

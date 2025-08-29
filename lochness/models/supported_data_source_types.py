@@ -74,8 +74,14 @@ SUPPORTED_DATA_SOURCE_TYPES: List[SupportedDataSourceTypes] = [
         data_source_type="mindlamp",
         data_source_metadata_dict={
             "api_url": "Mindlamp API URL",
-            "api_key": "Mindlamp API key",
-            "project_id": "Mindlamp project ID",
+            "keystore_name": "Name of the keystore entry containing the credentials",
+        },
+    ),
+    SupportedDataSourceTypes(
+        data_source_type="cantab",
+        data_source_metadata_dict={
+            "api_url": "CANTAB API URL",
+            "keystore_name": "Name of the keystore entry containing the credentials",
         },
     ),
 ]

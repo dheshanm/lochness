@@ -1,84 +1,87 @@
+"""
+Insert a test CANTAB data source into the database.
+"""
+
 import sys
 from pathlib import Path
 
-# Add project root to Python path
 file = Path(__file__).resolve()
 parent = file.parent
-root_dir = None
-for p in file.parents:
-    if p.name == 'lochness_v2':
-        root_dir = p
-if root_dir:
-    sys.path.append(str(root_dir))
-else:
-    # If running from project root, add current dir
-    sys.path.append(str(parent))
+root_dir = None  # pylint: disable=invalid-name
+for parent in file.parents:
+    if parent.name == "lochness_v2":
+        root_dir = parent
+
+sys.path.append(str(root_dir))
+
+# remove current directory from path
+try:
+    sys.path.remove(str(parent))
+except ValueError:
+    pass
+
+import logging
+from typing import Dict, Any
+
+from rich.logging import RichHandler
 
 from lochness.helpers import utils, db
 from lochness.models.data_source import DataSource
 from lochness.sources.cantab.models.data_source import CANTABDataSourceMetadata
 
+MODULE_NAME = "test.lochness.sources.cantab.insert_data_source"
+
+logger = logging.getLogger(MODULE_NAME)
+logargs: Dict[str, Any] = {
+    "level": logging.DEBUG,
+    # "format": "%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s",
+    "format": "%(message)s",
+    "handlers": [RichHandler(rich_tracebacks=True)],
+}
+
+logging.basicConfig(**logargs)
+
 # Data Source Details
 DATA_SOURCE_NAME = "CANTAB_Test_DS"
-SITE_ID = "TestSite" # Should match the site_id used in setup_test_dataflow.py or your actual site
-PROJECT_ID = "ProCAN" # Should match the project_id used in setup_test_dataflow.py or your actual project
+SITE_ID = "CP"
+PROJECT_ID = "Pronet"
 
 # This must match the key_name used when inserting CANTAB credentials
-KEYSTORE_NAME = "cantab_prod"
+KEYSTORE_NAME = "cantab_test"
 
-# CANTAB API Endpoint (from documentation: https://app.cantab.com/api/)
-CANTAB_API_ENDPOINT = "https://app.cantab.com/api"
+# CANTAB API Endpoint
+CANTAB_API_ENDPOINT = "https://connect-prime.int.cantab.com/api"
 
-def main():
-    print(f"Attempting to insert CANTAB data source '{DATA_SOURCE_NAME}'...")
 
-    try:
-        config_file = utils.get_config_file_path()
-        if not config_file.exists():
-            print(f"ERROR: Configuration file not found at {config_file}")
-            print("Please ensure 'config.ini' exists in the project root.")
-            return
+def insert_cantab_data_source():
+    """
+    Insert a test CANTAB data source into the database.
+    """
+    # Create the data source metadata
+    data_source_metadata = CANTABDataSourceMetadata(
+        keystore_name=KEYSTORE_NAME,
+        api_url=CANTAB_API_ENDPOINT,
+    )
 
-        print(f"Using configuration file: {config_file}")
+    # Create the data source
+    data_source = DataSource(
+        data_source_name=DATA_SOURCE_NAME,
+        site_id=SITE_ID,
+        project_id=PROJECT_ID,
+        data_source_type="cantab",
+        is_active=True,
+        data_source_metadata=data_source_metadata.model_dump(),
+    )
 
-        # Data source metadata (references the keystore entry)
-        data_source_metadata = {
-            "keystore_name": KEYSTORE_NAME,
-            "api_endpoint": CANTAB_API_ENDPOINT,
-        }
+    config_file = utils.get_config_file_path()
+    db.execute_queries(config_file, [data_source.to_sql_query()], show_commands=True)
 
-        # Create the DataSource object
-        data_source = DataSource(
-            data_source_name=DATA_SOURCE_NAME,
-            is_active=True,
-            site_id=SITE_ID,
-            project_id=PROJECT_ID,
-            data_source_type="cantab",
-            data_source_metadata=data_source_metadata
-        )
+    logger.info(f"Successfully inserted MindLAMP data source: {DATA_SOURCE_NAME}")
+    logger.info(f"Site: {SITE_ID}")
+    logger.info(f"Project: {PROJECT_ID}")
+    logger.info(f"Keystore Name: {KEYSTORE_NAME}")
+    logger.info(f"API URL: {CANTAB_API_ENDPOINT}")
 
-        # Initialize data_sources table if it doesn't exist
-        init_query = data_source.init_db_table_query()
-        db.execute_queries(
-            config_file=config_file,
-            queries=[init_query],
-            show_commands=False,
-        )
-        print("Data sources table initialized (if not already present).")
-
-        # Insert the new data source
-        insert_query = data_source.to_sql_query()
-        db.execute_queries(
-            config_file=config_file,
-            queries=[insert_query],
-            show_commands=False,
-        )
-        print(f"Successfully inserted data source '{DATA_SOURCE_NAME}'.")
-
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        import traceback
-        traceback.print_exc()
 
 if __name__ == "__main__":
-    main()
+    insert_cantab_data_source()
