@@ -269,7 +269,7 @@ class File:
         Return the files to push for a given project and site.
         """
         query = f"""
-        SELECT files.*
+        SELECT DISTINCT files.*
         FROM files
         LEFT JOIN data_pull ON (
             data_pull.file_path = files.file_path AND
