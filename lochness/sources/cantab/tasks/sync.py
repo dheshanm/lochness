@@ -25,7 +25,6 @@ except ValueError:
     pass
 
 import argparse
-# import base64
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -75,36 +74,6 @@ def get_cantab_cred(
         return json.loads(keystore.key_value)
     else:
         raise ValueError("CANTAB credentials not found in keystore")
-
-
-# def get_cantab_auth_headers(
-#     cantab_data_source: CANTABDataSource, config_file: Path
-# ) -> Dict[str, str]:
-#     """
-#     Get authentication headers for CANTAB API.
-
-#     Args:
-#         cantab_data_source (CANTABDataSource): The CANTAB data source.
-#         config_file (Path): Path to the configuration file.
-
-#     Returns:
-#         Dict[str, str]: Headers
-#     """
-#     credentials = get_cantab_cred(
-#         cantab_data_source=cantab_data_source, config_file=config_file
-#     )
-#     username = credentials["username"]
-#     password = credentials["password"]
-
-#     auth_string = f"{username}:{password}"
-#     encoded_auth_string = base64.b64encode(auth_string.encode("utf-8")).decode("utf-8")
-
-#     headers = {
-#         "Content-Type": "application/json",
-#         "Accept": "application/json",
-#         "Authorization": f"Basic {encoded_auth_string}",
-#     }
-#     return headers
 
 
 def get_cantab_auth(
@@ -311,7 +280,9 @@ def link_cantab_subject_id(
         ).insert(config_file)
         return
 
-    logger.info(f"Found {len(active_cantab_data_sources)} active CANTAB data source(s).")
+    logger.info(
+        f"Found {len(active_cantab_data_sources)} active CANTAB data source(s)."
+    )
 
     for cantab_data_source in active_cantab_data_sources:
         logger.info(
