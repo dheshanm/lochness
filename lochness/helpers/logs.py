@@ -28,13 +28,13 @@ def configure_logging(
         None
     """
     log_params = config.parse(config_file, "logging")
-    log_file_r = log_params[module_name]
+    log_file_r: str = log_params[module_name]  # type: ignore
 
     if log_file_r.startswith("/"):
         log_file = Path(log_file_r)
     else:
         general_params = config.parse(config_file, "general")
-        repo_root = Path(general_params["repo_root"])
+        repo_root = Path(general_params["repo_root"])  # type: ignore
 
         log_file = repo_root / log_file_r
 
@@ -53,7 +53,12 @@ def configure_logging(
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(
         logging.Formatter(
-            "%(asctime)s  - %(process)d - %(name)s - %(levelname)s - %(message)s - [%(filename)s:%(lineno)d]"
+            "%(asctime)s  - "
+            "%(process)d - "
+            "%(name)s - "
+            "%(levelname)s - "
+            "%(message)s - "
+            "[%(filename)s:%(lineno)d]"
         )
     )
 
