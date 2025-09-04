@@ -42,8 +42,6 @@ logging.basicConfig(**logargs)
 
 # MinIO Credentials
 minio_cred = config.parse(config_file, 'datasink-test')
-
-
 KEY_NAME = minio_cred['key_name']
 ACCESS_KEY =  minio_cred['access_key']
 SECRET_KEY = minio_cred['key_value']
