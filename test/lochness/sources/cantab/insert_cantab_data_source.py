@@ -42,15 +42,16 @@ logargs: Dict[str, Any] = {
 logging.basicConfig(**logargs)
 
 # Data Source Details
-DATA_SOURCE_NAME = "CANTAB_Test_DS"
-SITE_ID = "CP"
-PROJECT_ID = "Pronet"
+cantab_cred = config.parse(config_file, 'cantab-test')
+DATA_SOURCE_NAME = cantab_cred['data_source_name']
+SITE_ID = cantab_cred['site_id']
+PROJECT_ID = cantab_cred['project_id']
 
 # This must match the key_name used when inserting CANTAB credentials
-KEYSTORE_NAME = "cantab_test"
+KEYSTORE_NAME = cantab_cred['key_name']
 
 # CANTAB API Endpoint
-CANTAB_API_ENDPOINT = "https://connect-prime.int.cantab.com/api"
+CANTAB_API_ENDPOINT = cantab_cred['cantab_api_endpoint']
 
 
 def insert_cantab_data_source():

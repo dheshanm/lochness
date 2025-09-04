@@ -29,6 +29,7 @@ from rich.logging import RichHandler
 
 from lochness.helpers import utils, db, config
 from lochness.models.keystore import KeyStore
+from lochness.helpers import config
 
 MODULE_NAME = "test.lochness.sources.cantab.insert_creds"
 
@@ -43,8 +44,9 @@ logargs: Dict[str, Any] = {
 logging.basicConfig(**logargs)
 
 # Keystore Details
-KEY_NAME = "cantab_test"
-PROJECT_ID = "Pronet"
+cantab_cred = config.parse(config_file, 'cantab-test')
+KEY_NAME = cantab_cred['key_name']
+PROJECT_ID = cantab_cred['project_id']
 
 
 def get_credentials_from_env() -> Dict[str, str]:
