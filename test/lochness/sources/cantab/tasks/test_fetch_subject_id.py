@@ -26,6 +26,7 @@ from rich.logging import RichHandler
 from lochness.helpers import utils
 from lochness.sources.cantab import api as cantab_api
 from lochness.sources.cantab.models.data_source import CANTABDataSource
+from lochness.helpers import config
 
 MODULE_NAME = "test.lochness.sources.cantab.link_subject"
 
@@ -40,12 +41,13 @@ logargs: Dict[str, Any] = {
 logging.basicConfig(**logargs)
 
 # Data Source Details
-DATA_SOURCE_NAME = "CANTAB_Test_DS"
-SITE_ID = "CP"
-PROJECT_ID = "Pronet"
+cantab_cred = config.parse(config_file, 'cantab-test')
+DATA_SOURCE_NAME = cantab_cred['data_source_name']
+SITE_ID = cantab_cred['site_id']
+PROJECT_ID = cantab_cred['project_id']
 
-TEST_SUBJECT_ID = "0100001"
-EXPECTED_CANTAB_ID = "689df5673991d9b8fb392b5b"
+TEST_SUBJECT_ID = minio_cred['test_subject_id']
+EXPECTED_CANTAB_ID = minio_cred['cantab_id']
 
 
 @pytest.fixture(scope="module")
