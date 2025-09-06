@@ -28,6 +28,7 @@ from rich.logging import RichHandler
 
 from lochness.helpers import db, utils
 from lochness.models.data_sinks import DataSink
+from lochness.helpers import config
 
 logger = logging.getLogger(__name__)
 logargs: Dict[str, Any] = {
@@ -39,16 +40,17 @@ logargs: Dict[str, Any] = {
 
 logging.basicConfig(**logargs)
 
-TEST_DATA_SINK_NAME = "MinIO_Test_Sink"
-TEST_SITE_ID = "CP"
-TEST_PROJECT_ID = "Pronet"
+minio_cred = config.parse(config_file, 'datasink-test')
+TEST_DATA_SINK_NAME = minio_cred['test_data_sink_name']
+TEST_SITE_ID = minio_cred['test_site_id']
+TEST_PROJECT_ID = minio_cred['test_project_id']
 
 # This must match the key_name used when inserting MinIO credentials
-KEYSTORE_NAME = "minio_dev"
+KEYSTORE_NAME = minio_cred['keystore_name']
 
 # MinIO specific metadata (non-sensitive, but defines the sink)
-MINIO_BUCKET_NAME = "lochness-test-bucket"
-MINIO_REGION = "us-east-1"  # MinIO often doesn't use regions; placeholder
+MINIO_BUCKET_NAME = minio_cred['minio_bucket_name']
+MINIO_REGION = minio_cred['minio_region']  # MinIO often doesn't use regions; placeholder
 
 
 def main(config_file: Path):
