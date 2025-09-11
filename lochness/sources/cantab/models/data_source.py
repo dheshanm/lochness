@@ -3,7 +3,7 @@ Data Source Model for CANTAB
 """
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -16,7 +16,8 @@ class CANTABDataSourceMetadata(BaseModel):
     """
 
     keystore_name: str
-    api_endpoint: str
+    api_url: str
+    modality: str = 'cantab'
 
 
 class CANTABDataSource(BaseModel):
@@ -75,7 +76,8 @@ class CANTABDataSource(BaseModel):
                 data_source_type=row["data_source_type"],
                 data_source_metadata=CANTABDataSourceMetadata(
                     keystore_name=row["data_source_metadata"]["keystore_name"],
-                    api_endpoint=row["data_source_metadata"]["api_endpoint"],
+                    api_url=row["data_source_metadata"]["api_url"],
+                    modality=row["data_source_metadata"]["modality"],
                 ),
             )
             return cantab_data_source
@@ -87,3 +89,37 @@ class CANTABDataSource(BaseModel):
             cantab_data_sources.append(cantab_data_source)
 
         return cantab_data_sources
+
+    @staticmethod
+    def get(
+        data_source_name: str,
+        site_id: str,
+        project_id: str,
+        config_file: Path
+    ) -> Optional["CANTABDataSource"]:
+        """
+        Get a specific CANTAB data source by name, site ID, and project ID.
+
+        Args:
+            data_source_name (str): The name of the data source.
+            site_id (str): The site ID.
+            project_id (str): The project ID.
+            config_file (Path): Path to the Lochness configuration file.
+
+        Returns:
+            Optional[CANTABDataSource]: The CANTAB data source if found, else None.
+        """
+        all_data_sources = CANTABDataSource.get_all_cantab_data_sources(
+            config_file=config_file,
+            active_only=False,
+        )
+
+        for data_source in all_data_sources:
+            if (
+                data_source.data_source_name == data_source_name
+                and data_source.site_id == site_id
+                and data_source.project_id == project_id
+            ):
+                return data_source
+
+        return None
