@@ -9,6 +9,7 @@ from pydantic import BaseModel
 import pandas as pd
 
 from lochness.helpers import db, utils
+from lochness.models.data_source import DataSource
 
 
 class DataPull(BaseModel):
@@ -115,6 +116,25 @@ class DataPull(BaseModel):
         Returns a detailed string representation of the DataPull object for debugging.
         """
         return self.__str__()
+
+    def get_associated_data_source(self, config_file: Path) -> DataSource:
+        """
+        Returns the associated data source name for this data pull.
+
+        Args:
+            config_file (Path): Path to the Lochness configuration file.
+
+        Returns:
+            DataSource: The DataSource object associated with this data pull.
+        """
+        data_source = DataSource.get(
+            data_source_name=self.data_source_name,
+            site_id=self.site_id,
+            project_id=self.project_id,
+            config_file=config_file,
+        )
+
+        return data_source
 
     @staticmethod
     def get_most_recent_data_pull(

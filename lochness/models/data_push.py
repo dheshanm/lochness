@@ -3,7 +3,9 @@ Data Push represents a data push from a local file system to a
 configured data sink. (Typically a Object Store)
 """
 
-from typing import Dict, Any
+from pathlib import Path
+from typing import Any, Dict
+
 from pydantic import BaseModel
 
 from lochness.helpers import db
@@ -22,7 +24,7 @@ class DataPush(BaseModel):
     """
 
     data_sink_id: int
-    file_path: str
+    file_path: str | Path
     file_md5: str
     push_time_s: int
     push_metadata: Dict[str, Any]
@@ -63,7 +65,7 @@ class DataPush(BaseModel):
         """
         Returns a string representation of the data push.
         """
-        return f"[Data Sink: {self.data_sink_name} | File Path: {self.file_md5}]"
+        return f"[Data Push: {self.file_path} | Data Sink ID: {self.data_sink_id}]"
 
     def __repr__(self) -> str:
         """ "
@@ -75,7 +77,7 @@ class DataPush(BaseModel):
         """
         Returns the SQL query to insert the data push into the database.
         """
-        file_path = db.sanitize_string(self.file_path)
+        file_path = db.sanitize_string(str(self.file_path))
         file_md5 = db.sanitize_string(self.file_md5)
         push_time_s = self.push_time_s
         push_metadata = db.sanitize_json(self.push_metadata)

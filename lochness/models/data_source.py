@@ -3,9 +3,14 @@ Data Source Model
 """
 
 from typing import Dict, Any
+from pathlib import Path
+import logging
+
 from pydantic import BaseModel
 
 from lochness.helpers import db
+
+logger = logging.getLogger(__name__)
 
 
 class DataSource(BaseModel):
@@ -20,6 +25,52 @@ class DataSource(BaseModel):
     project_id: str
     data_source_type: str
     data_source_metadata: Dict[str, Any]
+
+    @staticmethod
+    def get(
+        data_source_name: str,
+        site_id: str,
+        project_id: str,
+        config_file: Path
+    ) -> "DataSource":
+        """
+        Retrieve a DataSource object from the database.
+
+        Args:
+            data_source_name (str): Name of the data source.
+            site_id (str): Site ID associated with the data source.
+            project_id (str): Project ID associated with the data source.
+
+        Returns:
+            DataSource: The retrieved DataSource object.
+        """
+        query = f"""
+            SELECT * FROM data_sources
+            WHERE data_source_name = '{data_source_name}'
+              AND site_id = '{site_id}'
+              AND project_id = '{project_id}';
+        """
+        db_df = db.execute_sql(config_file=config_file, query=query)
+        if db_df.empty:
+            raise ValueError(f"Data source {data_source_name} not found.")
+
+        data_source_name = db_df['data_source_name'][0]
+        site_id = db_df['site_id'][0]
+        project_id = db_df['project_id'][0]
+        is_active = db_df['data_source_is_active'][0]
+        data_source_type = db_df['data_source_type'][0]
+        data_source_metadata = db_df['data_source_metadata'][0]
+
+        data_source = DataSource(
+            data_source_name=data_source_name,
+            site_id=site_id,
+            project_id=project_id,
+            is_active=is_active,
+            data_source_type=data_source_type,
+            data_source_metadata=data_source_metadata
+        )
+
+        return data_source
 
     @staticmethod
     def init_db_table_query() -> str:

@@ -1,9 +1,14 @@
+"""
+Insets and retrieves MinIO credentials in the KeyStore.
+"""
+import logging
 import json
-from pathlib import Path
-from typing import Dict, Any
+from typing import Dict
 
 from lochness.helpers import utils, db, config
 from lochness.models.keystore import KeyStore
+
+logger = logging.getLogger(__name__)
 
 
 def insert_minio_cred(
@@ -24,8 +29,7 @@ def insert_minio_cred(
     """
     config_file = utils.get_config_file_path()
 
-    encryption_passphrase = config.parse(config_file, 'general')[
-            'encryption_passphrase']
+    encryption_passphrase = config.get_encryption_passphrase(config_file=config_file)
 
     minio_credentials = {
         "access_key": access_key,
@@ -40,18 +44,21 @@ def insert_minio_cred(
         project_id=project_id,
         key_metadata={
             "description": "Credentials for MinIO object storage",
-            "created_by": "lochness_script"}
+            "created_by": "lochness_script",
+        },
     )
 
-    insert_query = my_key.to_sql_query(
-            encryption_passphrase=encryption_passphrase)
+    insert_query = my_key.to_sql_query(encryption_passphrase=encryption_passphrase)
 
     db.execute_queries(
         config_file=config_file,
         queries=[insert_query],
         show_commands=False,
     )
-    print(f"Successfully inserted/updated MinIO credentials with key_name '{key_name}' for project '{project_id}'.")
+    logger.info(
+        f"Inserted/updated MinIO credentials with key_name '{key_name}' for project '{project_id}'."
+    )
+
 
 def get_minio_cred(
     key_name: str,
@@ -67,9 +74,7 @@ def get_minio_cred(
         Dict[str, str]: A dictionary containing 'access_key', 'secret_key', and 'endpoint_url'.
     """
     config_file = utils.get_config_file_path()
-    encryption_passphrase = config.parse(config_file, "general")[
-        "encryption_passphrase"
-    ]
+    encryption_passphrase = config.get_encryption_passphrase(config_file=config_file)
 
     keystore = KeyStore.get_by_name_and_project(
         config_file,
@@ -80,4 +85,8 @@ def get_minio_cred(
     if keystore:
         return json.loads(keystore.key_value)
     else:
-        raise ValueError(f"MinIO credentials with key_name '{key_name}' for project '{project_id}' not found in keystore")
+        raise ValueError(
+            f"MinIO credentials with key_name '{key_name}' "
+            f"for project '{project_id}' "
+            f"not found in keystore"
+        )

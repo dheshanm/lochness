@@ -5,13 +5,11 @@ File Model
 
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, List
-
-import pandas as pd
+from typing import Optional, List, Dict, Any
 
 from lochness.helpers import db
 from lochness.helpers import hash as hash_helper
-from lochness.models.logs import Logs
+from lochness.models.data_pulls import DataPull
 
 
 class File:
@@ -47,6 +45,46 @@ class File:
         else:
             self.md5 = None
 
+        self.internal_metadata: Dict[str, Any] = {}
+
+    @staticmethod
+    def new(
+        file_path: Path,
+        file_size_mb: float,
+        m_time: datetime,
+        md5: Optional[str] = None,
+    ) -> "File":
+        """
+        Create a new File object from given parameters.
+
+        Args:
+            file_name (str): The name of the file.
+            file_type (str): The type of the file.
+            file_size_mb (float): The size of the file in MB.
+            file_path (Path): The path to the file.
+            m_time (datetime): The modification time of the file.
+            md5 (Optional[str]): The MD5 hash of the file.
+
+        Returns:
+            File: A new File object.
+        """
+
+        file_obj = object.__new__(File)
+        file_obj.file_name = file_path.name
+
+        file_type = file_path.suffix
+        if file_type == ".lock":
+            # Use previous suffix for lock files
+            file_type = file_path.suffixes[-2]
+        file_obj.file_type = file_type
+
+        file_obj.file_size_mb = file_size_mb
+        file_obj.file_path = file_path
+        file_obj.m_time = m_time
+        file_obj.md5 = md5
+        file_obj.internal_metadata = {}
+        return file_obj
+
     def __str__(self):
         """
         Return a string representation of the File object.
@@ -80,7 +118,9 @@ class File:
         return sql_query
 
     @staticmethod
-    def get_most_recent_file_obj(config_file: Path, file_path: Path) -> Optional["File"]:
+    def get_most_recent_file_obj(
+        config_file: Path, file_path: Path
+    ) -> Optional["File"]:
         """
         Return the most recent record that matches the given file_path.
 
@@ -114,18 +154,70 @@ class File:
             return None
 
         row = result_df.iloc[0]
-        file_obj = object.__new__(File)
-        file_obj.file_path = Path(row["file_path"])
-        file_obj.file_name = Path(row["file_path"]).name
-        file_obj.file_type = Path(row["file_path"]).suffix
-        file_obj.md5 = row["file_md5"]
-        file_obj.m_time = row["file_m_time"]
-        file_obj.file_size_mb = row["file_size_mb"]
-        file_obj.file_type = row["file_type"]
-        file_obj.file_name = row["file_name"]
-        file_obj.modality = row["modality"]
+        # file_obj = object.__new__(File)
+        # file_obj.file_path = Path(row["file_path"])
+        # file_obj.file_name = Path(row["file_path"]).name
+        # file_obj.file_type = Path(row["file_path"]).suffix
+        # file_obj.md5 = row["file_md5"]
+        # file_obj.m_time = row["file_m_time"]
+        # file_obj.file_size_mb = row["file_size_mb"]
+        # file_obj.file_type = row["file_type"]
+        # file_obj.file_name = row["file_name"]
+
+        file_obj = File.new(
+            file_path=Path(row["file_path"]),
+            file_size_mb=row["file_size_mb"],
+            m_time=row["file_m_time"],
+            md5=row["file_md5"],
+        )
+
+        file_obj.internal_metadata = {"modality": row["modality"]}
 
         return file_obj
+
+    @staticmethod
+    def get_recent_data_pull(
+        file_path: Path,
+        config_file: Path
+    ) -> Optional[DataPull]:
+        """
+        Return the most recent data pull for the given file path.
+
+        Args:
+            file_path (Path): The path to the file.
+            config_file (Path): The database configuration file.
+
+        Returns:
+            DataPull: The most recent DataPull object.
+        """
+        f_path = db.sanitize_string(str(file_path))
+        sql_query = f"""
+        SELECT *
+        FROM data_pull
+        WHERE file_path = '{f_path}'
+        ORDER BY pull_time_s DESC
+        LIMIT 1;
+        """
+
+        sql_query = db.handle_null(sql_query)
+        result_df = db.execute_sql(config_file, sql_query)
+
+        if result_df.empty:
+            return None
+
+        row = result_df.iloc[0]
+        data_pull = DataPull(
+            file_path=row["file_path"],
+            file_md5=row["file_md5"],
+            pull_time_s=row["pull_time_s"],
+            pull_metadata=row["pull_metadata"],
+            data_source_name=row["data_source_name"],
+            subject_id=row["subject_id"],
+            site_id=row["site_id"],
+            project_id=row["project_id"],
+        )
+
+        return data_pull
 
     @staticmethod
     def drop_db_table_query() -> str:
@@ -167,88 +259,60 @@ class File:
         return sql_query
 
     @staticmethod
-    def get_all_files_in_df(
-        config_file: Path, project_id: str, site_id: str
-    ) -> pd.DataFrame:
-        """
-        Return the files to push for a given project and site.
-        """
-        sql_query = f"""SELECT DISTINCT
-          data_pull.project_id,
-          data_pull.site_id,
-          data_pull.subject_id,
-          data_pull.data_source_name,
-          data_sources.data_source_metadata->>'modality' as modality,
-          files.*
-        FROM files
-        JOIN data_pull on data_pull.file_path = files.file_path AND
-          data_pull.file_md5 = files.file_md5
-        JOIN data_sources on
-          data_sources.data_source_name = data_pull.data_source_name
-          AND data_sources.site_id = data_pull.site_id
-          AND data_sources.project_id = data_pull.project_id
-        WHERE data_pull.project_id = '{project_id}'
-          AND data_pull.site_id = '{site_id}'
-        """
-
-        sql_query = db.handle_null(sql_query)
-        files_df = db.execute_sql(config_file, sql_query)
-
-        return files_df
-
-    @staticmethod
-    def get_all_files_in_df_detailed(config_file: Path) -> pd.DataFrame:
-        """
-        Return the files to push for a given project and site.
-        """
-        sql_query = """
-        SELECT * FROM files
-        LEFT JOIN data_pull on (data_pull.file_path = files.file_path AND
-        data_pull.file_md5 = files.file_md5)
-        """
-        sql_query = db.handle_null(sql_query)
-        files_df = db.execute_sql(config_file, sql_query)
-
-        return files_df
-
-    @staticmethod
     def get_files_to_push(
-        config_file: Path, project_id: str, site_id: str
+        config_file: Path,
+        project_id: str,
+        site_id: str,
+        data_sink_id: int,
     ) -> List["File"]:
         """
         Return the files to push for a given project and site.
         """
-        files_df = File.get_all_files_in_df(config_file, project_id, site_id)
-        files_to_push = []
-        for _, row in files_df.iterrows():
-            try:
-                file_path = Path(row["file_path"])
-                file_md5 = row["file_md5"]
-                file_obj = File(file_path=file_path, with_hash=False)
-                file_obj.md5 = file_md5
+        query = f"""
+        SELECT DISTINCT files.*
+        FROM files
+        LEFT JOIN data_pull ON (
+            data_pull.file_path = files.file_path AND
+            data_pull.file_md5 = files.file_md5
+        )
+        LEFT JOIN data_push ON (
+            data_push.file_path = files.file_path AND
+            data_push.file_md5 = files.file_md5 AND
+            data_push.data_sink_id = {data_sink_id}
+        )
+        WHERE data_pull.project_id = '{project_id}'
+          AND data_pull.site_id = '{site_id}'
+          AND data_push.data_sink_id IS NULL;
+        """
 
-                file_obj.data_source_name = row["data_source_name"]
-                file_obj.project_id = row["project_id"]
-                file_obj.site_id = row["site_id"]
-                file_obj.subject_id = row["subject_id"]
-                file_obj.modality = row["modality"]
+        db_df = db.execute_sql(
+            config_file=config_file,
+            query=query,
+        )
 
-                files_to_push.append(file_obj)
+        if db_df.empty:
+            return []
 
-            except FileNotFoundError:
-                Logs(
-                    log_level="WARN",
-                    log_message={
-                        "event": "data_push_file_not_found",
-                        "message": f"File not found on disk, skipping: {row['file_path']}",
-                        "file_path": row["file_path"],
-                    },
-                ).insert(config_file)
-        return files_to_push
+        files: List[File] = []
+        for _, row in db_df.iterrows():
+            file_obj = object.__new__(File)
+            file_obj.file_path = Path(row["file_path"])
+            file_obj.file_name = row["file_name"]
+            file_obj.file_type = row["file_type"]
+            file_obj.file_size_mb = row["file_size_mb"]
+            file_obj.m_time = row["file_m_time"]
+            file_obj.md5 = row["file_md5"]
+
+            files.append(file_obj)
+
+        return files
 
     def delete_record_query(self) -> str:
         """Generate a query to delete a record from the table"""
-        query = f"""DELETE FROM files
+        query = f"""
+        DELETE
+        FROM files
         WHERE file_path = '{self.file_path}'
-          AND file_md5 = '{self.md5}';"""
+          AND file_md5 = '{self.md5}';
+        """
         return query
