@@ -1,0 +1,79 @@
+{
+    "project": {
+        "project_id": "SampleProject",
+        "project_name": "SampleProject",
+        "project_is_active": true,
+        "project_metadata": {
+            "description": "Sample project for schema",
+            "start_date": "2025-09-17"
+        }
+    },
+    "sites": [
+        {
+            "site_id": "SampleSite",
+            "site_name": "Sample Site",
+            "project_id": "SampleProject",
+            "site_is_active": true,
+            "site_metadata": {
+                "location": "Place",
+                "contact": "test@example.com"
+            }
+        }
+    ],
+    "data_sources": [
+        {
+            "data_source_name": "SampleProject_mindlamp",
+            "is_active": true,
+            "site_id": "SampleSite",
+            "project_id": "SampleProject",
+            "data_source_type": "mindlamp",
+            "data_source_metadata": {
+                "api_url": "https://api.mindlamp.com",
+                "keystore_name": "mindlamp_SampleProject"
+            }
+        }
+    ],
+    "data_sinks": [
+        {
+            "data_sink_name": "SampleProject_minio",
+            "site_id": "SampleSite",
+            "project_id": "SampleProject",
+            "data_sink_metadata": {
+                "type": "minio",
+                "active": true,
+                "bucket_name": "SampleProject-bucket",
+                "region": "us-east-1",
+                "keystore_name": "minio_SampleProject"
+            }
+        }
+    ],
+    "credentials": [
+        {
+            "key_name": "minio_SampleProject",
+            "key_value": {
+                "access_key": "access_key",
+                "secret_key": "secret_key",
+                "endpoint_url": "http://minio.example.com"
+            },
+            "key_type": "minio",
+            "project_id": "SampleProject",
+            "key_metadata": {
+                "description": "MinIO credentials for SampleProject project",
+                "created_by": "lochness_setup"
+            }
+        },
+        {
+            "key_name": "mindlamp_SampleProject",
+            "key_value": {
+                "access_key": "api_token",
+                "secret_key": "api_secret"
+            },
+            "key_type": "mindlamp",
+            "project_id": "SampleProject",
+            "key_metadata": {
+                "description": "Test MindLAMP credentials",
+                "created_by": "lochness_setup"
+            }
+        }
+    ]
+}
