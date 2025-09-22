@@ -6,3 +6,4 @@ rich
 pydantic
 minio
 blake3
+requests
