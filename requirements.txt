@@ -5,3 +5,4 @@ sqlalchemy
 rich
 pydantic
 minio
+blake3
