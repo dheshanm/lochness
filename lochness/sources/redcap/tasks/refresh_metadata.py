@@ -359,26 +359,18 @@ if __name__ == "__main__":
     parser.add_argument('--site_id', type=str, default=None, help='Site ID to refresh (optional)')
     args = parser.parse_args()
 
-    # config_file = Path(__file__).resolve().parents[3] / "sample.config.ini"
-    config_file = Path(__file__).resolve().parents[4] / "sample.config.ini"
+    config_file = utils.get_config_file_path()
+    logger.info(f"Using config file: {config_file}")
+
+    if not config_file.exists():
+        logger.error(f"Config file does not exist: {config_file}")
+        sys.exit(1)
+
     logs.configure_logging(
         config_file=config_file, module_name=MODULE_NAME, logger=logger
     )
 
     logger.info("Refreshing REDCap metadata...")
-
-    if not config_file.exists():
-        logger.error(f"Config file does not exist: {config_file}")
-        Logs(
-            log_level="FATAL",
-            log_message={
-                "event": "redcap_metadata_refresh_config_missing",
-                "message": f"Config file does not exist: {config_file}",
-                "config_file_path": str(config_file),
-            },
-        ).insert(config_file)
-        sys.exit(1)
-
     refresh_all_metadata(config_file=config_file, project_id=args.project_id, site_id=args.site_id)
 
     logger.info("Finished refreshing REDCap metadata.")
