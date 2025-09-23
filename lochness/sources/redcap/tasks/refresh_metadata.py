@@ -233,8 +233,13 @@ def insert_metadata(
         config_file (Path): Path to the config file.
     """
     subjects: List[Subject] = []
+
     for _, row in df.iterrows():  # type: ignore
         subject_id: str = cast(str, row["subject_id"])
+
+        # Check if subject_id already exists in subjects list
+        if any(sub.subject_id == subject_id for sub in subjects):
+            continue
 
         # Use all other columns as metadata
         subject_metadata: Dict[str, Any] = cast(
@@ -259,6 +264,10 @@ def insert_metadata(
         queries=insert_queries,
         show_commands=False,
     )
+
+    duplicates_skipped = len(df) - len(subjects)
+    if duplicates_skipped > 0:
+        logger.info(f"Skipped {duplicates_skipped} duplicate subjects.")
 
     logger.info(
         "Inserted / Updated metadata for "
