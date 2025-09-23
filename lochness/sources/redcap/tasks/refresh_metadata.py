@@ -32,7 +32,7 @@ import pandas as pd
 import requests
 from rich.logging import RichHandler
 
-from lochness.helpers import logs, utils, db, config
+from lochness.helpers import logs, utils, db
 from lochness.models.subjects import Subject
 from lochness.models.keystore import KeyStore
 from lochness.models.logs import Logs
@@ -105,7 +105,6 @@ def log_event(
 
 def fetch_metadata(
     redcap_data_source: RedcapDataSource,
-    encryption_passphrase: str,
     config_file: Path,
     timeout_s: int = 30,
 ) -> Optional[pd.DataFrame]:
@@ -131,13 +130,26 @@ def fetch_metadata(
     logger.info(f"Refreshing metadata for {identifier}...")
 
     # Get API token from keystore
-    query = KeyStore.retrieve_key_query(
+    keystore = KeyStore.retrieve_keystore(
         redcap_data_source.data_source_metadata.keystore_name,
         project_id,
-        encryption_passphrase,
+        config_file,
     )
-    api_token_df = db.execute_sql(config_file, query)
-    api_token = api_token_df["key_value"][0]
+    if keystore is None:
+        logger.error(f"Keystore entry not found for {identifier}")
+
+        log_event(
+            config_file=config_file,
+            log_level="ERROR",
+            event="redcap_metadata_fetch_keystore_missing",
+            message=f"Keystore entry not found for {identifier}.",
+            project_id=project_id,
+            site_id=site_id,
+            data_source_name=data_source_name,
+        )
+        return None
+
+    api_token = keystore.key_value
 
     optional_variables_dictionary = (
         redcap_data_source.data_source_metadata.optional_variables_dictionary
@@ -160,7 +172,7 @@ def fetch_metadata(
         required_variables.append(variable_name)
 
     for i, variable in enumerate(required_variables):
-        data[f"fields[{i}]"] = variable
+        data[f"fields[{i}]"] = variable  # type: ignore
 
     r = requests.post(redcap_endpoint_url, data=data, timeout=timeout_s)
     if r.status_code != 200:
@@ -279,14 +291,8 @@ def refresh_all_metadata(
         site_id=site_id,
     )
 
-    # Get encryption passphrase from config
-    encryption_passphrase: str = config.parse(config_file, "general")[  # type: ignore
-        "encryption_passphrase"
-    ]
-
     active_redcap_data_sources = RedcapDataSource.get_all_redcap_data_sources(
         config_file=config_file,
-        encryption_passphrase=encryption_passphrase,
         active_only=True,
     )
 
@@ -343,7 +349,6 @@ def refresh_all_metadata(
 
         source_metadata = fetch_metadata(
             redcap_data_source=redcap_data_source,
-            encryption_passphrase=encryption_passphrase,
             config_file=config_file,
         )
         if source_metadata is None:

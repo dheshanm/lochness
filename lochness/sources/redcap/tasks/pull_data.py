@@ -152,7 +152,7 @@ def add_filter_logic_for_penncnb_redcap(
 def fetch_subject_data(
     redcap_data_source: RedcapDataSource,
     subject_id: str,
-    encryption_passphrase: str,
+    config_file: Path,
     timeout_s: int = 60,
 ) -> Optional[bytes]:
     """
@@ -161,7 +161,7 @@ def fetch_subject_data(
     Args:
         redcap_data_source (RedcapDataSource): The REDCap data source.
         subject_id (str): The subject ID to fetch data for.
-        encryption_passphrase (str): The encryption passphrase for keystore access.
+        config_file (Path): Path to the config file.
         timeout_s (int): Timeout for the API request.
 
     Returns:
@@ -176,14 +176,27 @@ def fetch_subject_data(
     identifier = f"{project_id}::{site_id}::{data_source_name}::{subject_id}"
     logger.info(f"Fetching data for {identifier}...")
 
-    config_file = utils.get_config_file_path()
-    query = KeyStore.retrieve_key_query(
+    keystore = KeyStore.retrieve_keystore(
         redcap_data_source.data_source_metadata.keystore_name,
         project_id,
-        encryption_passphrase,
+        config_file,
     )
-    api_token_df = db.execute_sql(config_file, query)
-    api_token = api_token_df["key_value"][0]
+    if keystore is None:
+        logger.error(f"Keystore entry not found for {identifier}")
+
+        log_event(
+            config_file=config_file,
+            log_level="ERROR",
+            event="redcap_data_pull_keystore_missing",
+            message=f"Keystore entry not found for {identifier}.",
+            project_id=project_id,
+            site_id=site_id,
+            data_source_name=data_source_name,
+            subject_id=subject_id,
+        )
+        return None
+
+    api_token = keystore.key_value
 
     filter_logic = ""
     if redcap_data_source.data_source_metadata.subject_id_variable_as_the_pk:
@@ -347,13 +360,8 @@ def pull_all_data(
         site_id=site_id,
     )
 
-    encryption_passphrase: str = config.parse(config_file, "general")[  # type: ignore
-        "encryption_passphrase"
-    ]
-
     active_redcap_data_sources = RedcapDataSource.get_all_redcap_data_sources(
         config_file=config_file,
-        encryption_passphrase=encryption_passphrase,
         active_only=True,
     )
 
@@ -460,7 +468,7 @@ def pull_all_data(
             raw_data = fetch_subject_data(
                 redcap_data_source=redcap_data_source,
                 subject_id=subject.subject_id,
-                encryption_passphrase=encryption_passphrase,
+                config_file=config_file,
             )
 
             if raw_data:

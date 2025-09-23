@@ -40,7 +40,6 @@ class RedcapDataSource(BaseModel):
     @staticmethod
     def get_all_redcap_data_sources(
         config_file: Path,
-        encryption_passphrase: str,
         active_only: bool = True,
     ) -> List["RedcapDataSource"]:
         """
@@ -73,14 +72,14 @@ class RedcapDataSource(BaseModel):
             Returns:
                 RedcapDataSource: A RedcapDataSource object.
             """
-            from lochness.models.keystore import KeyStore
-            keystore_name = row["data_source_metadata"]["keystore_name"]
-            query = KeyStore.retrieve_key_query(keystore_name, row["project_id"], encryption_passphrase)
-            api_token_df = db.execute_sql(config_file, query)
-            api_token = api_token_df['key_value'][0]
-
             # Handle missing optional_variables_dictionary with default empty list
-            optional_variables = row["data_source_metadata"].get("optional_variables_dictionary", [])
+            optional_variables = (
+                row["data_source_metadata"]
+                .get(
+                    "optional_variables_dictionary",
+                    []
+                )
+            )
 
             redcap_data_source = RedcapDataSource(
                 data_source_name=row["data_source_name"],
