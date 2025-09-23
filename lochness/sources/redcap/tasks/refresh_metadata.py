@@ -124,7 +124,7 @@ def fetch_metadata(
     site_id = redcap_data_source.site_id
     data_source_name = redcap_data_source.data_source_name
 
-    subject_id_variable: str = redcap_data_source.data_source_metadata.subject_id_variable
+    subject_id_variable: Optional[str] = redcap_data_source.data_source_metadata.subject_id_variable
     redcap_endpoint_url: str = redcap_data_source.data_source_metadata.endpoint_url
 
     identifier = f"{project_id}::{site_id}::{data_source_name}"
@@ -175,7 +175,7 @@ def fetch_metadata(
     for record in raw_data:
         result: Dict[str, str] = {}
         for variable in required_variables:
-            result[variable] = record[variable]
+            result[variable] = record[variable]  # type: ignore
         results.append(result)  # type: ignore
 
     df = pd.DataFrame(results)
