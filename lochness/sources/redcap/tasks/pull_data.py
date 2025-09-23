@@ -53,6 +53,59 @@ logargs: Dict[str, Any] = {
 logging.basicConfig(**logargs)
 
 
+def log_event(
+    config_file: Path,
+    log_level: str,
+    event: str,
+    message: str,
+    project_id: Optional[str] = None,
+    site_id: Optional[str] = None,
+    data_source_name: Optional[str] = None,
+    subject_id: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Standardized logging for REDCap metadata refresh events.
+
+    Args:
+        config_file (Path): Path to the config file.
+        log_level (str): Log level (e.g., "INFO", "ERROR").
+        event (str): Event name.
+        message (str): Log message.
+        project_id (Optional[str]): Project ID.
+        site_id (Optional[str]): Site ID.
+        data_source_name (Optional[str]): Data source name.
+        extra (Optional[Dict[str, Any]]): Additional key-value pairs
+            to include in the log.
+
+    Returns:
+        None
+    """
+    data_source_identifier = (
+        f"{project_id}::{site_id}::{data_source_name}"
+        if project_id and site_id and data_source_name
+        else None
+    )
+
+    log_message = {
+        "event": event,
+        "message": message,
+        "project_id": project_id,
+        "site_id": site_id,
+        "subject_id": subject_id,
+        "data_source_type": "redcap",
+        "module": MODULE_NAME,
+    }
+    if data_source_identifier:
+        log_message["data_source_identifier"] = data_source_identifier
+    if extra:
+        log_message.update(extra)
+    Logs(
+        log_level=log_level,
+        log_message=log_message,
+    ).insert(config_file)
+
+
 def add_filter_logic_for_penncnb_redcap(
     filter_logic: str, subject_id: str, subject_id_var: str
 ):
@@ -148,7 +201,7 @@ def fetch_subject_data(
 
         if redcap_data_source.data_source_metadata.messy_subject_id:
             filter_logic = add_filter_logic_for_penncnb_redcap(
-                filter_logic, subject_id, subject_id_var
+                filter_logic, subject_id, subject_id_var  # type: ignore
             )
 
         data = {
@@ -175,18 +228,17 @@ def fetch_subject_data(
     except requests.exceptions.RequestException as e:
         logger.error(f"filter_logic: {filter_logic}")
         logger.error(f"Failed to fetch data for {identifier}: {e}")
-        Logs(
+        log_event(
+            config_file=config_file,
             log_level="ERROR",
-            log_message={
-                "event": "redcap_data_pull_fetch_failed",
-                "message": f"Failed to fetch data for {identifier}.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "data_source_name": data_source_name,
-                "subject_id": subject_id,
-                "error": str(e),
-            },
-        ).insert(config_file)
+            event="redcap_data_pull_fetch_failed",
+            message=f"Failed to fetch data for {identifier}.",
+            project_id=project_id,
+            site_id=site_id,
+            data_source_name=data_source_name,
+            subject_id=subject_id,
+            extra={"error": str(e)},
+        )
         return None
 
 
@@ -218,6 +270,7 @@ def save_subject_data(
         # )
         # The 'first' instance is the first in alphabetical order
         # is_first_redcap = data_source_name == instance_names[0]
+
         # Capitalize project name (first letter uppercase, rest lowercase)
         project_name_cap = (
             project_id[:1].upper() + project_id[1:].lower()
@@ -248,34 +301,31 @@ def save_subject_data(
         db.execute_queries(
             config_file, [file_model.to_sql_query()], show_commands=False
         )
-        Logs(
+        log_event(
+            config_file=config_file,
             log_level="INFO",
-            log_message={
-                "event": "redcap_data_pull_save_success",
-                "message": f"Successfully saved data for {subject_id} to {file_path}.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "data_source_name": data_source_name,
-                "subject_id": subject_id,
-                "file_path": str(file_path),
-                "file_md5": file_md5 if file_md5 else None,
-            },
-        ).insert(config_file)
+            event="redcap_data_pull_save_success",
+            message=f"Successfully saved data for {subject_id} to {file_path}.",
+            project_id=project_id,
+            site_id=site_id,
+            data_source_name=data_source_name,
+            subject_id=subject_id,
+            extra={"file_path": str(file_path), "file_md5": file_md5 if file_md5 else None},
+        )
         return file_path, file_md5 if file_md5 else ""
     except Exception as e:  # pylint: disable=broad-except
         logger.error(f"Failed to save data for {subject_id}: {e}")
-        Logs(
+        log_event(
+            config_file=config_file,
             log_level="ERROR",
-            log_message={
-                "event": "redcap_data_pull_save_failed",
-                "message": f"Failed to save data for {subject_id}.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "data_source_name": data_source_name,
-                "subject_id": subject_id,
-                "error": str(e),
-            },
-        ).insert(config_file)
+            event="redcap_data_pull_save_failed",
+            message=f"Failed to save data for {subject_id}.",
+            project_id=project_id,
+            site_id=site_id,
+            data_source_name=data_source_name,
+            subject_id=subject_id,
+            extra={"error": str(e)},
+        )
         return None
 
 
@@ -288,15 +338,14 @@ def pull_all_data(
     """
     Main function to pull data for all active REDCap data sources and subjects.
     """
-    Logs(
+    log_event(
+        config_file=config_file,
         log_level="INFO",
-        log_message={
-            "event": "redcap_data_pull_start",
-            "message": "Starting REDCap data pull process.",
-            "project_id": project_id,
-            "site_id": site_id,
-        },
-    ).insert(config_file)
+        event="redcap_data_pull_start",
+        message="Starting REDCap data pull process.",
+        project_id=project_id,
+        site_id=site_id,
+    )
 
     encryption_passphrase: str = config.parse(config_file, "general")[  # type: ignore
         "encryption_passphrase"
@@ -319,34 +368,32 @@ def pull_all_data(
 
     if not active_redcap_data_sources:
         logger.info("No active REDCap data sources found for data pull.")
-        Logs(
+        log_event(
+            config_file=config_file,
             log_level="INFO",
-            log_message={
-                "event": "redcap_data_pull_no_active_sources",
-                "message": "No active REDCap data sources found for data pull.",
-                "project_id": project_id,
-                "site_id": site_id,
-            },
-        ).insert(config_file)
+            event="redcap_data_pull_no_active_sources",
+            message="No active REDCap data sources found for data pull.",
+            project_id=project_id,
+            site_id=site_id,
+        )
         return
 
     logger.info(
         f"Found {len(active_redcap_data_sources)} active REDCap data sources for data pull."
     )
-    Logs(
+    log_event(
+        config_file=config_file,
         log_level="INFO",
-        log_message={
-            "event": "redcap_data_pull_active_sources_found",
-            "message": (
-                "Found "
-                + str(len(active_redcap_data_sources))
-                + " active REDCap data sources for data pull."
-            ),
-            "count": len(active_redcap_data_sources),
-            "project_id": project_id,
-            "site_id": site_id,
-        },
-    ).insert(config_file)
+        event="redcap_data_pull_active_sources_found",
+        message=(
+            "Found "
+            + str(len(active_redcap_data_sources))
+            + " active REDCap data sources for data pull."
+        ),
+        project_id=project_id,
+        site_id=site_id,
+        extra={"count": len(active_redcap_data_sources)},
+    )
 
     for redcap_data_source in active_redcap_data_sources:
         # Get subjects for this data source
@@ -373,42 +420,40 @@ def pull_all_data(
                     + f"{redcap_data_source.site_id}."
                 )
             )
-            Logs(
+            log_event(
+                config_file=config_file,
                 log_level="INFO",
-                log_message={
-                    "event": "redcap_data_pull_no_subjects",
-                    "message": (
-                        f"No subjects found for "
-                        f"{redcap_data_source.project_id}::"
-                        f"{redcap_data_source.site_id}."
-                    ),
-                    "project_id": redcap_data_source.project_id,
-                    "site_id": redcap_data_source.site_id,
-                    "data_source_name": redcap_data_source.data_source_name,
-                },
-            ).insert(config_file)
+                event="redcap_data_pull_no_subjects",
+                message=(
+                    f"No subjects found for "
+                    f"{redcap_data_source.project_id}::"
+                    f"{redcap_data_source.site_id}."
+                ),
+                project_id=redcap_data_source.project_id,
+                site_id=redcap_data_source.site_id,
+                data_source_name=redcap_data_source.data_source_name,
+            )
             continue
 
         logger.info(
             f"Found {len(subjects_in_db)} subjects for {redcap_data_source.data_source_name}."
         )
-        Logs(
+        log_event(
+            config_file=config_file,
             log_level="INFO",
-            log_message={
-                "event": "redcap_data_pull_subjects_found",
-                "message": (
-                    "Found "
-                    + str(len(subjects_in_db))
-                    + " subjects for "
-                    + str(redcap_data_source.data_source_name)
-                    + "."
-                ),
-                "count": len(subjects_in_db),
-                "project_id": redcap_data_source.project_id,
-                "site_id": redcap_data_source.site_id,
-                "data_source_name": redcap_data_source.data_source_name,
-            },
-        ).insert(config_file)
+            event="redcap_data_pull_subjects_found",
+            message=(
+                "Found "
+                + str(len(subjects_in_db))
+                + " subjects for "
+                + str(redcap_data_source.data_source_name)
+                + "."
+            ),
+            project_id=redcap_data_source.project_id,
+            site_id=redcap_data_source.site_id,
+            data_source_name=redcap_data_source.data_source_name,
+            extra={"count": len(subjects_in_db)},
+        )
 
         for subject in subjects_in_db:
             start_time = datetime.now()
