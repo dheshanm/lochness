@@ -607,14 +607,20 @@ def fetch_subject_data(
 
     dates_to_redownload_set: Set[datetime] = set()
     if force_start_date and force_end_date:
-        force_start_date = force_start_date.replace(hour=0, minute=0, second=0, microsecond=0)
-        force_end_date = force_end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        force_start_date = force_start_date.replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        force_end_date = force_end_date.replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         dates_to_redownload = pd.date_range(
             start=force_start_date,
             end=force_end_date,
             freq="D",
         )
-        dates_to_redownload_set = set(date.to_pydatetime() for date in dates_to_redownload)
+        dates_to_redownload_set = set(
+            date.to_pydatetime() for date in dates_to_redownload
+        )
 
     dates_to_download: Set[datetime] = dates_to_fetch.union(dates_to_redownload_set)
 
@@ -810,18 +816,57 @@ def pull_all_data(
     )
 
 
+def parse_date(date_str: str) -> datetime:
+    """
+    Parse a date string in the format YYYY-MM-DD and return a timezone-aware datetime object.
+
+    Args:
+        date_str (str): Date string in the format YYYY-MM-DD.
+
+    Returns:
+        datetime: A timezone-aware datetime object set to UTC.
+    """
+    datetime_dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=pytz.UTC)
+    return datetime_dt
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pull data from MindLAMP data sources")
+    parser.add_argument("-c", "--config", type=str, help="Path to config file")
+    parser.add_argument("-p", "--project-id", type=str, help="Project ID to filter by")
+    parser.add_argument("-s", "--site-id", type=str, help="Site ID to filter by")
     parser.add_argument(
-        "--config", type=str, help="Path to config file"
-    )
-    parser.add_argument("--project-id", type=str, help="Project ID to filter by")
-    parser.add_argument("--site-id", type=str, help="Site ID to filter by")
-    parser.add_argument(
-        "--days-to-pull", type=int, default=14, help="Number of days of data to pull"
+        "-d", "--days-to-pull", type=int, default=14, help="Number of days of data to pull"
     )
     parser.add_argument(
-        "--days-to-redownload", type=int, default=7, help="Number of days of data to redownload"
+        "-r", "--days-to-redownload",
+        type=int,
+        default=7,
+        help="Number of days of data to redownload",
+    )
+    parser.add_argument(
+        "--start-date",
+        "-a",
+        type=str,
+        help="Start date for data pull (YYYY-MM-DD)",
+        default=None,
+    )
+    parser.add_argument(
+        "--end-date", "-b", type=str, help="End date for data pull (YYYY-MM-DD)", default=None
+    )
+    parser.add_argument(
+        "--force-start-date",
+        "-f",
+        type=str,
+        help="Start date for force redownload (YYYY-MM-DD)",
+        default=None,
+    )
+    parser.add_argument(
+        "--force-end-date",
+        "-g",
+        type=str,
+        help="End date for force redownload (YYYY-MM-DD)",
+        default=None,
     )
     args = parser.parse_args()
 
@@ -836,16 +881,50 @@ if __name__ == "__main__":
     )
 
     logger.info("Starting MindLAMP data pull script...")
-    logger.info(f"Days to pull: {args.days_to_pull}")
-    logger.info(f"Days to redownload: {args.days_to_redownload}")
 
-    end_date = datetime.now(tz=pytz.UTC) - timedelta(days=1)
-    start_date = end_date - timedelta(days=args.days_to_pull - 1)
-    force_end_date = end_date
-    force_start_date = force_end_date - timedelta(days=args.days_to_redownload - 1)
+    # Validation logic for date/days arguments
+    date_range_provided = args.start_date is not None and args.end_date is not None
+    days_provided = (
+        args.days_to_pull is not None and args.days_to_redownload is not None
+    )
 
-    logger.info(f"Pulling data from {start_date.date()} to {end_date.date()}")
-    logger.info(f"Redownloading data from {force_start_date.date()} to {force_end_date.date()}")
+    if date_range_provided and days_provided:
+        logger.error(
+            "Both date range (start_date/end_date) and days-based arguments "
+            "(days_to_pull/days_to_redownload) provided. Please provide only one method."
+        )
+        sys.exit(1)
+    if not date_range_provided and not days_provided:
+        logger.error(
+            "Neither date range nor days-based arguments provided. "
+            "Please specify either a date range or days to pull/redownload."
+        )
+        sys.exit(1)
+
+    # Parse date arguments if provided, else use days-based logic
+    if date_range_provided:
+        start_date = parse_date(args.start_date)
+        end_date = parse_date(args.end_date)
+        logger.info(f"Using date range: {start_date.date()} to {end_date.date()}")
+    else:
+        end_date = datetime.now(tz=pytz.UTC) - timedelta(days=1)
+        start_date = end_date - timedelta(days=args.days_to_pull - 1)
+        logger.info(f"Days to pull: {args.days_to_pull}")
+        logger.info(f"Pulling data from {start_date.date()} to {end_date.date()}")
+
+    if args.force_start_date and args.force_end_date:
+        force_start_date = parse_date(args.force_start_date)
+        force_end_date = parse_date(args.force_end_date)
+        logger.info(
+            f"Redownloading data from {force_start_date.date()} to {force_end_date.date()}"
+        )
+    else:
+        force_end_date = end_date
+        force_start_date = force_end_date - timedelta(days=args.days_to_redownload - 1)
+        logger.info(f"Days to redownload: {args.days_to_redownload}")
+        logger.info(
+            f"Redownloading data from {force_start_date.date()} to {force_end_date.date()}"
+        )
 
     pull_all_data(
         config_file=config_file,
