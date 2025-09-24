@@ -34,7 +34,7 @@ import pandas as pd
 import pytz
 from rich.logging import RichHandler
 
-from lochness.helpers import config, db
+from lochness.helpers import config, db, logs, utils
 from lochness.helpers.timer import Timer
 from lochness.models.data_pulls import DataPull
 from lochness.models.files import File
@@ -54,6 +54,59 @@ logargs: Dict[str, Any] = {
 logging.basicConfig(**logargs)
 
 LIMIT = 1000000
+
+
+def log_event(
+    config_file: Path,
+    log_level: str,
+    event: str,
+    message: str,
+    project_id: Optional[str] = None,
+    site_id: Optional[str] = None,
+    data_source_name: Optional[str] = None,
+    subject_id: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Standardized logging for REDCap metadata refresh events.
+
+    Args:
+        config_file (Path): Path to the config file.
+        log_level (str): Log level (e.g., "INFO", "ERROR").
+        event (str): Event name.
+        message (str): Log message.
+        project_id (Optional[str]): Project ID.
+        site_id (Optional[str]): Site ID.
+        data_source_name (Optional[str]): Data source name.
+        extra (Optional[Dict[str, Any]]): Additional key-value pairs
+            to include in the log.
+
+    Returns:
+        None
+    """
+    data_source_identifier = (
+        f"{project_id}::{site_id}::{data_source_name}"
+        if project_id and site_id and data_source_name
+        else None
+    )
+
+    log_message = {
+        "event": event,
+        "message": message,
+        "project_id": project_id,
+        "site_id": site_id,
+        "subject_id": subject_id,
+        "data_source_type": "mindlamp",
+        "module": MODULE_NAME,
+    }
+    if data_source_identifier:
+        log_message["data_source_identifier"] = data_source_identifier
+    if extra:
+        log_message.update(extra)
+    Logs(
+        log_level=log_level,
+        log_message=log_message,
+    ).insert(config_file)
 
 
 def get_mindlamp_credentials(
@@ -594,16 +647,15 @@ def pull_all_data(
     """
     Main function to pull data for all active MindLAMP data sources and subjects.
     """
-    Logs(
+    log_event(
+        config_file=config_file,
         log_level="INFO",
-        log_message={
-            "event": "mindlamp_data_pull_start",
-            "message": "Starting MindLAMP data pull process.",
-            "project_id": project_id,
-            "site_id": site_id,
-            "days_to_pull": days_to_pull,
-        },
-    ).insert(config_file)
+        event="mindlamp_data_pull_start",
+        message="Starting MindLAMP data pull process.",
+        project_id=project_id,
+        site_id=site_id,
+        data_source_name=None,
+    )
 
     active_mindlamp_data_sources = MindLAMPDataSource.get_all_mindlamp_data_sources(
         config_file=config_file, active_only=True
@@ -620,15 +672,15 @@ def pull_all_data(
 
     if not active_mindlamp_data_sources:
         logger.info("No active MindLAMP data sources found for data pull.")
-        Logs(
+        log_event(
+            config_file=config_file,
             log_level="INFO",
-            log_message={
-                "event": "mindlamp_data_pull_no_active_sources",
-                "message": "No active MindLAMP data sources found for data pull.",
-                "project_id": project_id,
-                "site_id": site_id,
-            },
-        ).insert(config_file)
+            event="mindlamp_data_pull_no_active_sources",
+            message="No active MindLAMP data sources found for data pull.",
+            project_id=project_id,
+            site_id=site_id,
+            data_source_name=None,
+        )
         return
 
     logger.info(
@@ -637,19 +689,19 @@ def pull_all_data(
         "active MindLAMP data sources "
         "for data pull."
     )
-    Logs(
+    log_event(
+        config_file=config_file,
         log_level="INFO",
-        log_message={
-            "event": "mindlamp_data_pull_active_sources_found",
-            "message": (
-                f"Identified {len(active_mindlamp_data_sources)} "
-                "active MindLAMP data sources for data pull."
-            ),
-            "count": len(active_mindlamp_data_sources),
-            "project_id": project_id,
-            "site_id": site_id,
-        },
-    ).insert(config_file)
+        event="mindlamp_data_pull_active_sources_found",
+        message=(
+            f"Identified {len(active_mindlamp_data_sources)} "
+            "active MindLAMP data sources for data pull."
+        ),
+        project_id=project_id,
+        site_id=site_id,
+        data_source_name=None,
+        extra={"count": len(active_mindlamp_data_sources)},
+    )
 
     for mindlamp_data_source in active_mindlamp_data_sources:
         # Get subjects for this data source
@@ -667,38 +719,36 @@ def pull_all_data(
                     f"{mindlamp_data_source.site_id}."
                 )
             )
-            Logs(
+            log_event(
+                config_file=config_file,
                 log_level="INFO",
-                log_message={
-                    "event": "mindlamp_data_pull_no_subjects",
-                    "message": (
-                        f"No subjects found for {mindlamp_data_source.project_id}::"
-                        f"{mindlamp_data_source.site_id}."
-                    ),
-                    "project_id": mindlamp_data_source.project_id,
-                    "site_id": mindlamp_data_source.site_id,
-                    "data_source_name": mindlamp_data_source.data_source_name,
-                },
-            ).insert(config_file)
+                event="mindlamp_data_pull_no_subjects",
+                message=(
+                    f"No subjects found for {mindlamp_data_source.project_id}::"
+                    f"{mindlamp_data_source.site_id}."
+                ),
+                project_id=mindlamp_data_source.project_id,
+                site_id=mindlamp_data_source.site_id,
+                data_source_name=mindlamp_data_source.data_source_name,
+            )
             continue
 
         logger.info(
             f"Found {len(subjects_in_db)} subjects for {mindlamp_data_source.data_source_name}."
         )
-        Logs(
+        log_event(
+            config_file=config_file,
             log_level="INFO",
-            log_message={
-                "event": "mindlamp_data_pull_subjects_found",
-                "message": (
-                    f"Found {len(subjects_in_db)} subjects for "
-                    f"{mindlamp_data_source.data_source_name}."
-                ),
-                "count": len(subjects_in_db),
-                "project_id": mindlamp_data_source.project_id,
-                "site_id": mindlamp_data_source.site_id,
-                "data_source_name": mindlamp_data_source.data_source_name,
-            },
-        ).insert(config_file)
+            event="mindlamp_data_pull_subjects_found",
+            message=(
+                f"Found {len(subjects_in_db)} subjects for "
+                f"{mindlamp_data_source.data_source_name}."
+            ),
+            project_id=mindlamp_data_source.project_id,
+            site_id=mindlamp_data_source.site_id,
+            data_source_name=mindlamp_data_source.data_source_name,
+            extra={"count": len(subjects_in_db)},
+        )
 
         for subject in subjects_in_db:
             data_pulls = fetch_subject_data(
@@ -724,52 +774,57 @@ def pull_all_data(
                     queries=queries,
                     show_commands=False,
                 )
-
-                Logs(
+                log_event(
+                    config_file=config_file,
                     log_level="INFO",
-                    log_message={
-                        "event": "mindlamp_data_pull_subject_complete",
-                        "message": (
-                            f"Fetched {len(data_pulls)} data pulls for subject "
-                            f"{subject.subject_id} in project {mindlamp_data_source.project_id} "
-                            f"and site {mindlamp_data_source.site_id}."
-                        ),
-                        "subject_id": subject.subject_id,
-                        "data_source_name": mindlamp_data_source.data_source_name,
-                        "project_id": mindlamp_data_source.project_id,
-                        "site_id": mindlamp_data_source.site_id,
-                    },
-                ).insert(config_file)
+                    event="mindlamp_data_pull_subject_complete",
+                    message=(
+                        f"Fetched {len(data_pulls)} data pulls for subject "
+                        f"{subject.subject_id} in project {mindlamp_data_source.project_id} "
+                        f"and site {mindlamp_data_source.site_id}."
+                    ),
+                    project_id=mindlamp_data_source.project_id,
+                    site_id=mindlamp_data_source.site_id,
+                    data_source_name=mindlamp_data_source.data_source_name,
+                    subject_id=subject.subject_id,
+                )
 
     logger.info("MindLAMP data pull process completed.")
-    Logs(
+    log_event(
+        config_file=config_file,
         log_level="INFO",
-        log_message={
-            "event": "mindlamp_data_pull_complete",
-            "message": "MindLAMP data pull process completed.",
-            "project_id": project_id,
-            "site_id": site_id,
-        },
-    ).insert(config_file)
+        event="mindlamp_data_pull_complete",
+        message="MindLAMP data pull process completed.",
+        project_id=project_id,
+        site_id=site_id,
+        data_source_name=None,
+    )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pull data from MindLAMP data sources")
     parser.add_argument(
-        "--config", type=str, default="config.ini", help="Path to config file"
+        "--config", type=str, help="Path to config file"
     )
     parser.add_argument("--project-id", type=str, help="Project ID to filter by")
     parser.add_argument("--site-id", type=str, help="Site ID to filter by")
     parser.add_argument(
         "--days-to-pull", type=int, default=7, help="Number of days of data to pull"
     )
-
     args = parser.parse_args()
 
-    config_file = Path(args.config)
+    config_file = utils.get_config_file_path()
+    logger.info(f"Using config file: {config_file}")
     if not config_file.exists():
-        logger.error(f"Config file not found: {config_file}")
+        logger.error(f"Config file does not exist: {config_file}")
         sys.exit(1)
+
+    logs.configure_logging(
+        config_file=config_file, module_name=MODULE_NAME, logger=logger
+    )
+
+    logger.info("Starting MindLAMP data pull script...")
+    logger.info(f"Days to pull: {args.days_to_pull}")
 
     pull_all_data(
         config_file=config_file,
