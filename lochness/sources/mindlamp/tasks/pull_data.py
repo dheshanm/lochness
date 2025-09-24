@@ -554,8 +554,10 @@ def get_dates_without_data(
 def fetch_subject_data(
     mindlamp_data_source: MindLAMPDataSource,
     subject_id: str,
-    days_to_fetch: int,
-    days_to_redownload: int,
+    start_date: datetime,
+    end_date: datetime,
+    force_start_date: Optional[datetime],
+    force_end_date: Optional[datetime],
     config_file: Path,
 ) -> List[DataPull]:
     """
@@ -564,8 +566,10 @@ def fetch_subject_data(
     Args:
         mindlamp_data_source (MindLAMPDataSource): The MindLAMP data source object.
         subject_id (str): The subject ID.
-        days_to_fetch (int): Number of days to fetch data for.
-        days_to_redownload (int): Number of days to redownload data for.
+        start_date (datetime): Start date for data fetch.
+        end_date (datetime): End date for data fetch.
+        force_start_date (Optional[datetime]): Start date for forced redownload.
+        force_end_date (Optional[datetime]): End date for forced redownload.
         config_file (Path): Path to the configuration file.
 
     Returns:
@@ -589,12 +593,9 @@ def fetch_subject_data(
         )
         return data_pulls
 
-    current_dt = datetime.now(pytz.timezone("UTC"))
-    # Drop time info
-    current_dt = current_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-
-    start_date = current_dt - timedelta(days=days_to_fetch)
-    end_date = current_dt
+    # Drop time info from start/end dates
+    start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_date = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
 
     dates_to_fetch = get_dates_without_data(
         subject_id=subject_id,
@@ -604,12 +605,16 @@ def fetch_subject_data(
         config_file=config_file,
     )
 
-    dates_to_redownload = pd.date_range(
-        start=current_dt - timedelta(days=days_to_redownload),
-        end=current_dt - timedelta(days=1),
-        freq="D",
-    )
-    dates_to_redownload_set = set(date.to_pydatetime() for date in dates_to_redownload)
+    dates_to_redownload_set: Set[datetime] = set()
+    if force_start_date and force_end_date:
+        force_start_date = force_start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        force_end_date = force_end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        dates_to_redownload = pd.date_range(
+            start=force_start_date,
+            end=force_end_date,
+            freq="D",
+        )
+        dates_to_redownload_set = set(date.to_pydatetime() for date in dates_to_redownload)
 
     dates_to_download: Set[datetime] = dates_to_fetch.union(dates_to_redownload_set)
 
@@ -639,10 +644,12 @@ def fetch_subject_data(
 
 def pull_all_data(
     config_file: Path,
+    start_date: datetime,
+    end_date: datetime,
+    force_start_date: Optional[datetime],
+    force_end_date: Optional[datetime],
     project_id: Optional[str] = None,
     site_id: Optional[str] = None,
-    days_to_pull: int = 14,
-    days_to_redownload: int = 7,
 ):
     """
     Main function to pull data for all active MindLAMP data sources and subjects.
@@ -754,8 +761,10 @@ def pull_all_data(
             data_pulls = fetch_subject_data(
                 mindlamp_data_source=mindlamp_data_source,
                 subject_id=subject.subject_id,
-                days_to_fetch=days_to_pull,
-                days_to_redownload=days_to_redownload,
+                start_date=start_date,
+                end_date=end_date,
+                force_start_date=force_start_date,
+                force_end_date=force_end_date,
                 config_file=config_file,
             )
 
@@ -809,7 +818,10 @@ if __name__ == "__main__":
     parser.add_argument("--project-id", type=str, help="Project ID to filter by")
     parser.add_argument("--site-id", type=str, help="Site ID to filter by")
     parser.add_argument(
-        "--days-to-pull", type=int, default=7, help="Number of days of data to pull"
+        "--days-to-pull", type=int, default=14, help="Number of days of data to pull"
+    )
+    parser.add_argument(
+        "--days-to-redownload", type=int, default=7, help="Number of days of data to redownload"
     )
     args = parser.parse_args()
 
@@ -825,10 +837,22 @@ if __name__ == "__main__":
 
     logger.info("Starting MindLAMP data pull script...")
     logger.info(f"Days to pull: {args.days_to_pull}")
+    logger.info(f"Days to redownload: {args.days_to_redownload}")
+
+    end_date = datetime.now(tz=pytz.UTC) - timedelta(days=1)
+    start_date = end_date - timedelta(days=args.days_to_pull - 1)
+    force_end_date = end_date
+    force_start_date = force_end_date - timedelta(days=args.days_to_redownload - 1)
+
+    logger.info(f"Pulling data from {start_date.date()} to {end_date.date()}")
+    logger.info(f"Redownloading data from {force_start_date.date()} to {force_end_date.date()}")
 
     pull_all_data(
         config_file=config_file,
         project_id=args.project_id,
         site_id=args.site_id,
-        days_to_pull=args.days_to_pull,
+        start_date=start_date,
+        end_date=end_date,
+        force_start_date=force_start_date,
+        force_end_date=force_end_date,
     )
