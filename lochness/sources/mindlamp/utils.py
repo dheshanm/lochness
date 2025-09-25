@@ -17,11 +17,7 @@ from lochness.helpers.timer import Timer
 from lochness.models.data_pulls import DataPull
 from lochness.models.files import File
 from lochness.models.subjects import Subject
-from lochness.sources.mindlamp.api import (
-    connect_to_mindlamp,
-    get_activity_events_lamp,
-    get_sensor_events_lamp,
-)
+from lochness.sources.mindlamp import api as mindlamp_api
 from lochness.sources.mindlamp.models.data_source import MindLAMPDataSource
 
 logger = logging.getLogger(__name__)
@@ -226,7 +222,7 @@ def fetch_subject_data_for_date(
 
     identifier = f"{project_id}::{site_id}::{data_source_name}::{subject_id}"
 
-    connect_to_mindlamp(mindlamp_data_source, config_file)
+    mindlamp_api.connect_to_mindlamp(mindlamp_data_source, config_file)
 
     dt_in_utc = datetime_dt.astimezone(pytz.timezone("UTC"))
     date_utc = dt_in_utc.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -241,7 +237,7 @@ def fetch_subject_data_for_date(
 
     logger.debug(f"Fetching activity and sensor events for {identifier}...")
     with Timer() as a_timer:
-        activity_events = get_activity_events_lamp(
+        activity_events = mindlamp_api.get_activity_events_lamp(
             mindlamp_id, from_ts=start_timestamp, to_ts=end_timestamp
         )
     if len(activity_events) == 0:
@@ -249,7 +245,7 @@ def fetch_subject_data_for_date(
 
     logger.debug(f"Fetching sensor events for {identifier}...")
     with Timer() as timer:
-        sensor_events = get_sensor_events_lamp(
+        sensor_events = mindlamp_api.get_sensor_events_lamp(
             mindlamp_id, from_ts=start_timestamp, to_ts=end_timestamp
         )
     if sensor_events:

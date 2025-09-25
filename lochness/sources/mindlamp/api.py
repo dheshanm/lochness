@@ -47,7 +47,7 @@ def connect_to_mindlamp(
         raise ValueError("Missing required MindLAMP credentials")
     try:
         LAMP.connect(access_key, secret_key, api_url)
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         logger.error(f"Failed to connect to MindLAMP API: {e}")
         raise e
 
@@ -66,7 +66,7 @@ def get_activity_events_lamp(
             mindlamp_id, _from=from_ts, to=to_ts, _limit=limit
         )["data"]
         return activity_events
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         logger.error(f"Failed to get activity events for subject {mindlamp_id}: {e}")
         return []
 
@@ -85,6 +85,6 @@ def get_sensor_events_lamp(
             subject_id, _from=from_ts, to=to_ts, _limit=limit
         )["data"]
         return sensor_events
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         logger.error(f"Failed to get sensor events for subject {subject_id}: {e}")
         return []
