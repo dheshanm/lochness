@@ -25,15 +25,15 @@ except ValueError:
 import argparse
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import pytz
 from rich.logging import RichHandler
 
-from lochness.helpers import db, logs, utils
-from lochness.sources.mindlamp import utils as mindlamp_utils
+from lochness.helpers import logs, utils
 from lochness.models.logs import Logs
 from lochness.models.subjects import Subject
+from lochness.sources.mindlamp import utils as mindlamp_utils
 from lochness.sources.mindlamp.models.data_source import MindLAMPDataSource
 
 MODULE_NAME = "lochness.sources.mindlamp.tasks.pull_data"
@@ -231,15 +231,6 @@ def pull_all_data(
                     f"Fetched {len(data_pulls)} data pulls for subject {subject.subject_id} "
                     f"in project {mindlamp_data_source.project_id} and site "
                     f"{mindlamp_data_source.site_id}."
-                )
-
-                queries: List[str] = [
-                    data_pull.to_sql_query() for data_pull in data_pulls
-                ]
-                db.execute_queries(
-                    config_file=config_file,
-                    queries=queries,
-                    show_commands=False,
                 )
                 log_event(
                     config_file=config_file,
