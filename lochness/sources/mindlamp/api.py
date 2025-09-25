@@ -65,6 +65,11 @@ def get_activity_events_lamp(
         activity_events = LAMP.ActivityEvent.all_by_participant(
             mindlamp_id, _from=from_ts, to=to_ts, _limit=limit
         )["data"]
+        if len(activity_events) >= LIMIT:
+            logger.warning(
+                f"Returned activity events for subject {mindlamp_id} reached LIMIT ({LIMIT}). "
+                "Some events may not have been retrieved."
+            )
         return activity_events
     except Exception as e:  # pylint: disable=broad-except
         logger.error(f"Failed to get activity events for subject {mindlamp_id}: {e}")
@@ -84,6 +89,11 @@ def get_sensor_events_lamp(
         sensor_events = LAMP.SensorEvent.all_by_participant(
             subject_id, _from=from_ts, to=to_ts, _limit=limit
         )["data"]
+        if len(sensor_events) >= LIMIT:
+            logger.warning(
+                f"Returned sensor events for subject {subject_id} reached LIMIT ({LIMIT}). "
+                "Some events may not have been retrieved."
+            )
         return sensor_events
     except Exception as e:  # pylint: disable=broad-except
         logger.error(f"Failed to get sensor events for subject {subject_id}: {e}")
