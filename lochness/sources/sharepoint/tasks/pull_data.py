@@ -7,15 +7,12 @@ It will pull data for all active SharePoint data sources and their associated su
 """
 
 import sys
-from pathlib import Path
-import argparse
 import logging
-from typing import Any, Dict, List, Optional, cast
+import argparse
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 from datetime import datetime
-import json
 
-import requests
-import msal
 from rich.logging import RichHandler
 
 from lochness.helpers import logs, utils, db, config
@@ -25,8 +22,22 @@ from lochness.models.logs import Logs
 from lochness.models.files import File
 from lochness.models.data_pulls import DataPull
 from lochness.models.data_push import DataPush
-from lochness.models.data_sinks import DataSink
 from lochness.sources.sharepoint.models.data_source import SharepointDataSource
+from lochness.sources.sharepoint.tasks.pull_utils import (
+        log_event,
+        authenticate,
+        get_site_id,
+        get_drives,
+        find_drive_by_name,
+        list_drive_root,
+        find_folder_in_drive,
+        list_folder_items,
+        find_subfolder,
+        should_download_file,
+        get_matching_subfolders,
+        download_new_or_updated_files
+    )
+
 
 MODULE_NAME = "lochness.sources.sharepoint.tasks.pull_data"
 
@@ -40,182 +51,94 @@ logargs: Dict[str, Any] = {
 }
 logging.basicConfig(**logargs)
 
-
-def get_sharepoint_cred(sharepoint_data_source: SharepointDataSource) -> Dict[str, str]:
-    """Get SharePoint credentials from the keystore."""
-    config_file = utils.get_config_file_path()
-    encryption_passphrase = config.parse(config_file, "general")[
-        "encryption_passphrase"
-    ]
-
-    keystore = KeyStore.get_by_name_and_project(
-        config_file,
-        sharepoint_data_source.data_source_metadata.keystore_name,
-        sharepoint_data_source.project_id,
-        encryption_passphrase,
-    )
-    if keystore:
-        return json.loads(keystore.key_value)
-    else:
-        raise ValueError("SharePoint credentials not found in keystore")
+# Set up logger
+logging.basicConfig(**logargs)
+logger = logging.getLogger(MODULE_NAME)
 
 
-def get_access_token(sharepoint_data_source: SharepointDataSource) -> str:
-    """Get access token for SharePoint."""
-    credentials = get_sharepoint_cred(sharepoint_data_source)
-    authority = f"https://login.microsoftonline.com/{credentials['tenant_id']}"
-    app = msal.ConfidentialClientApplication(
-        credentials["client_id"],
-        authority=authority,
-        client_credential=credentials["client_secret"],
-    )
-
-    result = app.acquire_token_for_client(scopes=["https://graph.microsoft.com/.default"])
-
-    if "access_token" in result:
-        return result["access_token"]
-    else:
-        raise Exception(result.get("error_description"))
+config_file = utils.get_config_file_path()
 
 
-def fetch_subject_data(
-    sharepoint_data_source: SharepointDataSource,
-    subject_id: str,
-    encryption_passphrase: str,
-    timeout_s: int = 60,
-) -> Optional[bytes]:
+def fetch_subject_data(sharepoint_data_source: SharepointDataSource,
+                       subject_id: str) -> None:
     """
     Fetches data for a single subject from SharePoint.
 
     Args:
-        sharepoint_data_source (SharepointDataSource): The SharePoint data source.
+        sharepoint_data_source: SharepointDataSource object.
         subject_id (str): The subject ID to fetch data for.
-        encryption_passphrase (str): The encryption passphrase for keystore access.
-        timeout_s (int): Timeout for the API request.
 
     Returns:
-        Optional[bytes]: The raw data from SharePoint, or None if fetching fails.
+        None
     """
     project_id = sharepoint_data_source.project_id
     site_id = sharepoint_data_source.site_id
     data_source_name = sharepoint_data_source.data_source_name
 
+    metadata = sharepoint_data_source.data_source_metadata
+    form_name = metadata.form_name
+    modality = getattr(metadata, 'modality', 'unknown')
+
     identifier = f"{project_id}::{site_id}::{data_source_name}::{subject_id}"
-    logger.info(f"Fetching data for {identifier}...")
+    logger.debug("Fetching data for %s", identifier)
 
-    try:
-        # Get SharePoint access token
-        access_token = get_access_token(sharepoint_data_source)
-        
-        # Get SharePoint site and form information
-        site_url = sharepoint_data_source.data_source_metadata.site_url
-        form_id = sharepoint_data_source.data_source_metadata.form_id
-        
-        # Get form responses from SharePoint
-        url = f"https://graph.microsoft.com/v1.0/sites/{site_url}/lists/{form_id}/items?expand=fields"
-        headers = {"Authorization": f"Bearer {access_token}"}
-        
-        response = requests.get(url, headers=headers, timeout=timeout_s)
-        response.raise_for_status()
-        form_responses = response.json()["value"]
-        
-        # Filter responses for this subject (assuming there's a subject field)
-        subject_responses = []
-        for response in form_responses:
-            fields = response.get("fields", {})
-            # Look for subject-related fields (this might need adjustment based on your form structure)
-            if any(subject_id.lower() in str(value).lower() for value in fields.values()):
-                subject_responses.append(response)
-        
-        # Download all files associated with the form responses
-        import tempfile
-        import zipfile
-        import io
-        import os
-        
-        with tempfile.TemporaryDirectory() as temp_dir:
-            zip_buffer = io.BytesIO()
-            
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                # Add response metadata
-                for i, response in enumerate(subject_responses):
-                    response_info = {
-                        "response_id": response.get("id"),
-                        "subject_id": subject_id,
-                        "form_id": form_id,
-                        "response_data": response,
-                        "created": response.get("createdDateTime"),
-                        "modified": response.get("lastModifiedDateTime"),
-                    }
-                    
-                    # Add response metadata to ZIP
-                    response_json = json.dumps(response_info, indent=2, default=str)
-                    zip_file.writestr(f"responses/{response_info['response_id']}.json", response_json)
-                    
-                    # Download any attachments or files associated with this response
-                    try:
-                        # Get attachments for this response
-                        attachments_url = f"https://graph.microsoft.com/v1.0/sites/{site_url}/lists/{form_id}/items/{response.get('id')}/attachments"
-                        attachments_response = requests.get(attachments_url, headers=headers, timeout=timeout_s)
-                        
-                        if attachments_response.status_code == 200:
-                            attachments = attachments_response.json().get("value", [])
-                            for attachment in attachments:
-                                # Download the attachment
-                                file_url = attachment.get("@microsoft.graph.downloadUrl")
-                                if file_url:
-                                    file_response = requests.get(file_url, timeout=timeout_s)
-                                    if file_response.status_code == 200:
-                                        file_name = attachment.get("name", "unknown")
-                                        # Store the actual file with its original name and extension
-                                        zip_file.writestr(f"files/{response_info['response_id']}/{file_name}", file_response.content)
-                                        
-                                        # Also store file metadata
-                                        file_metadata = {
-                                            "file_name": file_name,
-                                            "file_size": len(file_response.content),
-                                            "content_type": file_response.headers.get("content-type", "application/octet-stream"),
-                                            "download_url": file_url,
-                                            "response_id": response_info['response_id'],
-                                        }
-                                        file_metadata_json = json.dumps(file_metadata, indent=2)
-                                        zip_file.writestr(f"files/{response_info['response_id']}/{file_name}.meta.json", file_metadata_json)
-                    except Exception as e:
-                        logger.warning(f"Could not download attachments for response {response_info['response_id']}: {e}")
-                
-                # Add summary metadata
-                summary = {
-                    "subject_id": subject_id,
-                    "form_id": form_id,
-                    "total_responses": len(subject_responses),
-                    "fetch_timestamp": datetime.now().isoformat(),
-                    "metadata": {
-                        "project_id": project_id,
-                        "site_id": site_id,
-                        "data_source_name": data_source_name,
-                        "sharepoint_site_url": site_url,
-                    }
-                }
-                zip_file.writestr("summary.json", json.dumps(summary, indent=2))
-            
-            zip_buffer.seek(0)
-            return zip_buffer.getvalue()
+    # keystore
+    keystore = KeyStore.retrieve_keystore(metadata.keystore_name,
+                                          project_id,
+                                          config_file=config_file)
+    metadata_query = KeyStore.retrieve_key_metadata(metadata.keystore_name,
+                                                    project_id)
+    keystore_metadata = db.execute_sql(config_file,
+                                       metadata_query).iloc[0]['key_metadata']
 
-    except Exception as e:
-        logger.error(f"Failed to fetch data for {identifier}: {e}")
-        Logs(
-            log_level="ERROR",
-            log_message={
-                "event": "sharepoint_data_pull_fetch_failed",
-                "message": f"Failed to fetch data for {identifier}.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "data_source_name": data_source_name,
-                "subject_id": subject_id,
-                "error": str(e),
-            },
-        ).insert(config_file)
-        return None
+    # Authenticate the sharepoint application
+    # For device flow use client_secret=None
+    headers = authenticate(client_id=keystore_metadata['client_id'],
+                           tenant_id=keystore_metadata['tenant_id'],
+                           client_secret=keystore.key_value)
+
+    # Get site ID
+    sharepoint_site_id = get_site_id(headers,
+                                     keystore_metadata['site_url'])
+
+    drives = get_drives(sharepoint_site_id, headers)
+    team_forms_drive = find_drive_by_name(drives, "Team Forms")
+    if not team_forms_drive:
+        raise RuntimeError("Team Forms drive not found.")
+    drive_id = team_forms_drive["id"]
+
+    responses_folder = find_folder_in_drive(drive_id, "Responses", headers)
+    if not responses_folder:
+        raise RuntimeError("Responses folder not found in Team Forms drive.")
+
+    # Build output path
+    project_name_cap = project_id[:1].upper() + project_id[1:].lower() \
+        if project_id else project_id
+
+    lochness_root = config.parse(config_file, 'general')['lochness_root']
+    output_dir = (
+        Path(lochness_root)
+        / project_name_cap
+        / "PHOENIX"
+        / "PROTECTED"
+        / f"{project_name_cap}{site_id}"
+        / "raw"
+        / subject_id
+        / modality
+    )
+    subfolders = get_matching_subfolders(drive_id, responses_folder,
+                                         form_name, headers)
+
+    for subfolder in subfolders:
+        download_new_or_updated_files(subfolder,
+                                      drive_id,
+                                      headers,
+                                      form_name,
+                                      subject_id,
+                                      site_id,
+                                      project_id,
+                                      data_source_name,
+                                      output_dir)
 
 
 def save_subject_data(
@@ -404,16 +327,13 @@ def push_to_data_sink(
         return None
 
 
-def push_to_minio_sink(
-    file_path: Path,
-    file_md5: str,
-    data_sink_id: int,
-    data_sink_name: str,
-    data_sink_metadata: Dict[str, Any],
-    project_id: str,
-    site_id: str,
-    config_file: Path,
-) -> Optional[DataPush]:
+def push_to_minio_sink(file_path: Path,
+                       file_md5: str,
+                       data_sink_id: int,
+                       data_sink_name: str,
+                       data_sink_metadata: Dict[str, Any],
+                       project_id: str,
+                       site_id: str) -> Optional[DataPush]:
     """
     Pushes a file to a MinIO data sink.
 
@@ -554,58 +474,65 @@ def push_to_minio_sink(
         return None
 
 
-def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None, push_to_sink: bool = False):
+def pull_all_data(
+    config_file: Path,
+    project_id: str = None,
+    site_id: str = None,
+    subject_id_list: Optional[List[str]] = None,
+    push_to_sink: bool = True):
     """
-    Main function to pull data for all active SharePoint data sources and subjects.
+    Main function to pull data for all SharePoint data sources and subjects.
     """
-    Logs(
-        log_level="INFO",
-        log_message={
-            "event": "sharepoint_data_pull_start",
-            "message": "Starting SharePoint data pull process.",
-            "project_id": project_id,
-            "site_id": site_id,
-            "push_to_sink": push_to_sink,
-        },
-    ).insert(config_file)
 
-    encryption_passphrase = config.parse(config_file, 'general')['encryption_passphrase']
-
-    active_sharepoint_data_sources = SharepointDataSource.get_all_sharepoint_data_sources(
+    log_event(
         config_file=config_file,
-        encryption_passphrase=encryption_passphrase,
-        active_only=True
+        log_level="INFO",
+        event="sharepoint_data_pull_start",
+        message="Starting SharePoint data pull process.",
+        project_id=project_id,
+        site_id=site_id,
     )
 
+    active_sharepoint_data_sources = \
+        SharepointDataSource.get_all_sharepoint_data_sources(
+                config_file=config_file,
+                active_only=True)
+
     if project_id:
-        active_sharepoint_data_sources = [ds for ds in active_sharepoint_data_sources if ds.project_id == project_id]
+        active_sharepoint_data_sources = [
+                ds for ds in active_sharepoint_data_sources
+                if ds.project_id == project_id]
     if site_id:
-        active_sharepoint_data_sources = [ds for ds in active_sharepoint_data_sources if ds.site_id == site_id]
+        active_sharepoint_data_sources = [
+                ds for ds in active_sharepoint_data_sources
+                if ds.site_id == site_id]
 
     if not active_sharepoint_data_sources:
-        logger.info("No active SharePoint data sources found for data pull.")
-        Logs(
+        msg = "No active SharePoint data sources found for data pull."
+        logger.info(msg)
+        log_event(
+            config_file=config_file,
             log_level="INFO",
-            log_message={
-                "event": "sharepoint_data_pull_no_active_sources",
-                "message": "No active SharePoint data sources found for data pull.",
-                "project_id": project_id,
-                "site_id": site_id,
-            },
-        ).insert(config_file)
+            event="sharepoint_data_pull_no_active_sources",
+            message=msg,
+            project_id=project_id,
+            site_id=site_id,
+        )
         return
 
-    logger.info(f"Found {len(active_sharepoint_data_sources)} active SharePoint data sources for data pull.")
-    Logs(
+    msg = ("Found "
+           + str(len(active_sharepoint_data_sources))
+           + " active REDCap data sources for data pull.")
+
+    logger.info(msg)
+    log_event(
+        config_file=config_file,
         log_level="INFO",
-        log_message={
-            "event": "sharepoint_data_pull_active_sources_found",
-            "message": f"Found {len(active_sharepoint_data_sources)} active SharePoint data sources for data pull.",
-            "count": len(active_sharepoint_data_sources),
-            "project_id": project_id,
-            "site_id": site_id,
-        },
-    ).insert(config_file)
+        event="sharepoint_data_pull_active_sources_found",
+        message=msg,        project_id=project_id,
+        site_id=site_id,
+        extra={"count": len(active_sharepoint_data_sources)},
+    )
 
     for sharepoint_data_source in active_sharepoint_data_sources:
         # Get subjects for this data source
@@ -615,39 +542,54 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
             config_file=config_file
         )
 
+        if subject_id_list:
+            subjects_in_db = [
+                x for x in subjects_in_db if x.subject_id in subject_id_list
+            ]
+
         if not subjects_in_db:
-            logger.info(f"No subjects found for {sharepoint_data_source.project_id}::{sharepoint_data_source.site_id}.")
-            Logs(
+            logger.info(  # pylint: disable=logging-not-lazy
+                (
+                    "No subjects found for "
+                    + f"{sharepoint_data_source.project_id}"
+                    + "::"
+                    + f"{sharepoint_data_source.site_id}."
+                )
+            )
+            log_event(
+                config_file=config_file,
                 log_level="INFO",
-                log_message={
-                    "event": "sharepoint_data_pull_no_subjects",
-                    "message": f"No subjects found for {sharepoint_data_source.project_id}::{sharepoint_data_source.site_id}.",
-                    "project_id": sharepoint_data_source.project_id,
-                    "site_id": sharepoint_data_source.site_id,
-                    "data_source_name": sharepoint_data_source.data_source_name,
-                },
-            ).insert(config_file)
+                event="sharepoint_data_pull_no_subjects",
+                message=(
+                    f"No subjects found for "
+                    f"{sharepoint_data_source.project_id}::"
+                    f"{sharepoint_data_source.site_id}."
+                ),
+                project_id=sharepoint_data_source.project_id,
+                site_id=sharepoint_data_source.site_id,
+                data_source_name=sharepoint_data_source.data_source_name,
+            )
             continue
 
-        logger.info(f"Found {len(subjects_in_db)} subjects for {sharepoint_data_source.data_source_name}.")
-        Logs(
+        msg = f"Found {len(subjects_in_db)} subjects for " \
+            f"{sharepoint_data_source.data_source_name}."
+        logger.info(msg)
+        log_event(
+            config_file=config_file,
             log_level="INFO",
-            log_message={
-                "event": "sharepoint_data_pull_subjects_found",
-                "message": f"Found {len(subjects_in_db)} subjects for {sharepoint_data_source.data_source_name}.",
-                "count": len(subjects_in_db),
-                "project_id": sharepoint_data_source.project_id,
-                "site_id": sharepoint_data_source.site_id,
-                "data_source_name": sharepoint_data_source.data_source_name,
-            },
-        ).insert(config_file)
+            event="sharepoint_data_pull_subjects_found",
+            message=msg,
+            project_id=sharepoint_data_source.project_id,
+            site_id=sharepoint_data_source.site_id,
+            data_source_name=sharepoint_data_source.data_source_name,
+            extra={"count": len(subjects_in_db)},
+        )
 
         for subject in subjects_in_db:
             start_time = datetime.now()
             raw_data = fetch_subject_data(
                 sharepoint_data_source=sharepoint_data_source,
                 subject_id=subject.subject_id,
-                encryption_passphrase=encryption_passphrase,
             )
 
             if raw_data:
@@ -689,29 +631,48 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
                             site_id=subject.site_id,
                             config_file=config_file,
                         )
-            break # Stop after the first subject
 
-    Logs(
+    log_event(
+        config_file=config_file,
         log_level="INFO",
-        log_message={
-            "event": "sharepoint_data_pull_complete",
-            "message": "Finished SharePoint data pull process.",
-            "project_id": project_id,
-            "site_id": site_id,
-            "push_to_sink": push_to_sink,
-        },
-    ).insert(config_file)
+        event="sharepoint_data_pull_complete",
+        message="Finished SharePoint data pull process.",
+        project_id=sharepoint_data_source.project_id,
+        site_id=sharepoint_data_source.site_id,
+        data_source_name=sharepoint_data_source.data_source_name,
+    )
+
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Pull SharePoint data for all or specific project/site.")
-    parser.add_argument('--project_id', type=str, default=None, help='Project ID to pull data for (optional)')
-    parser.add_argument('--site_id', type=str, default=None, help='Site ID to pull data for (optional)')
-    parser.add_argument('--push_to_sink', action='store_true', help='Push pulled files to data sink')
+    parser = argparse.ArgumentParser(
+        description="Pull SharePoint data for all or specific project/site."
+    )
+    parser.add_argument(
+        '--project_id',
+        type=str,
+        default=None,
+        help='Project ID to pull data for (optional)'
+    )
+    parser.add_argument(
+        '--site_id',
+        type=str,
+        default=None,
+        help='Site ID to pull data for (optional)'
+    )
+    parser.add_argument(
+        '--push_to_sink',
+        action='store_true',
+        help='Push pulled files to data sink'
+    )
     args = parser.parse_args()
 
     config_file = Path(__file__).resolve().parents[4] / "sample.config.ini"
-    print(f"Resolved config_file path: {config_file}") # Debugging line
+    logger.info(f"Using config file: {config_file}")
+    if not config_file.exists():
+        logger.error(f"Config file does not exist: {config_file}")
+        sys.exit(1)
+
     logs.configure_logging(
         config_file=config_file, module_name=MODULE_NAME, logger=logger
     )
@@ -730,6 +691,11 @@ if __name__ == "__main__":
         ).insert(config_file)
         sys.exit(1)
 
-    pull_all_data(config_file=config_file, project_id=args.project_id, site_id=args.site_id, push_to_sink=args.push_to_sink)
+    pull_all_data(
+        config_file=config_file,
+        project_id=args.project_id,
+        site_id=args.site_id,
+        push_to_sink=args.push_to_sink
+    )
 
     logger.info("Finished SharePoint data pull.") 

@@ -76,6 +76,22 @@ def create_fake_records(project_id, project_name, site_id,
     db.execute_queries(config_file,
                        [keystore.to_sql_query(encryption_passphrase)])
 
+    # create key store for sharepoint
+    sharepoint_cred = config.parse(config_file, 'sharepoint-test')
+    keystore = KeyStore(
+            key_name=sharepoint_cred['key_name'],
+            key_value=sharepoint_cred['key_value'],
+            key_type=sharepoint_cred['key_type'],
+            project_id=project_id,
+            key_metadata={
+                'client_id':sharepoint_cred['client_id'],
+                'tenant_id':sharepoint_cred['tenant_id'],
+                'site_url':sharepoint_cred['site_url'],
+                'form_name':sharepoint_cred['form_name'],
+                })
+    db.execute_queries(config_file,
+                       [keystore.to_sql_query(encryption_passphrase)])
+
     # create key store for data sink
     minio_cred = config.parse(config_file, 'datasink-test')
     keystore = KeyStore(
@@ -191,6 +207,22 @@ def create_fake_records(project_id, project_name, site_id,
     db.execute_queries(config_file, [dataPull.to_sql_query()])
 
 
+    # create fake data source for main redcap
+    dataSource = DataSource(
+            data_source_name=sharepoint_cred['data_source_name'],
+            is_active=True,
+            site_id=site_id,
+            project_id=project_id,
+            data_source_type='sharepoint',
+            data_source_metadata={
+                'keystore_name':sharepoint_cred['key_name'],
+                'site_url':sharepoint_cred['site_url'],
+                'form_name':sharepoint_cred['form_name'],
+                }
+            )
+    db.execute_queries(config_file, [dataSource.to_sql_query()])
+
+
 
 @pytest.fixture
 def fake_data_fixture():
@@ -276,6 +308,7 @@ def delete_fake_records(project_id, project_name, site_id,
                         site_name, subject_id, datasink_name):
     redcap_cred = config.parse(config_file, 'redcap-test')
     redcap_penncnb_cred = config.parse(config_file, 'redcap-penncnb-test')
+    sharepoint_cred = config.parse(config_file, 'sharepoint-test')
     test_file = Path('test_file.zip')
 
     fileObj = File(
@@ -336,6 +369,16 @@ def delete_fake_records(project_id, project_name, site_id,
             site_id=site_id,
             project_id=project_id,
             data_source_type='redcap',
+            data_source_metadata={}
+            )
+    db.execute_queries(config_file, [dataSource.delete_record_query()])
+
+    dataSource = DataSource(
+            data_source_name=sharepoint_cred['data_source_name'],
+            is_active=True,
+            site_id=site_id,
+            project_id=project_id,
+            data_source_type='shareopint',
             data_source_metadata={}
             )
     db.execute_queries(config_file, [dataSource.delete_record_query()])
