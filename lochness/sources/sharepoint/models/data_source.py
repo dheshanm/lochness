@@ -90,5 +90,3 @@ class SharepointDataSource(BaseModel):
             sharepoint_data_sources.append(sharepoint_data_source)
 
         return sharepoint_data_sources
-
-
