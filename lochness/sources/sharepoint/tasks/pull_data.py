@@ -12,7 +12,6 @@ import argparse
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from datetime import datetime
-import json
 
 from rich.logging import RichHandler
 
@@ -25,6 +24,7 @@ from lochness.models.data_pulls import DataPull
 from lochness.models.data_push import DataPush
 from lochness.sources.sharepoint.models.data_source import SharepointDataSource
 from lochness.sources.sharepoint.tasks.pull_utils import (
+        log_event,
         authenticate,
         get_site_id,
         get_drives,
@@ -52,14 +52,11 @@ logargs: Dict[str, Any] = {
 logging.basicConfig(**logargs)
 
 # Set up logger
-logging.basicConfig(
-    level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s'
-)
-logger = logging.getLogger(__name__)
+logging.basicConfig(**logargs)
+logger = logging.getLogger(MODULE_NAME)
 
 
 config_file = utils.get_config_file_path()
-
 
 
 def fetch_subject_data(sharepoint_data_source: SharepointDataSource,
@@ -133,9 +130,15 @@ def fetch_subject_data(sharepoint_data_source: SharepointDataSource,
                                          form_name, headers)
 
     for subfolder in subfolders:
-        download_new_or_updated_files(subfolder, drive_id,
-                                      headers, form_name,
-                                      subject_id, output_dir)
+        download_new_or_updated_files(subfolder,
+                                      drive_id,
+                                      headers,
+                                      form_name,
+                                      subject_id,
+                                      site_id,
+                                      project_id,
+                                      data_source_name,
+                                      output_dir)
 
 
 def save_subject_data(
@@ -471,58 +474,65 @@ def push_to_minio_sink(file_path: Path,
         return None
 
 
-def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None, push_to_sink: bool = False):
+def pull_all_data(
+    config_file: Path,
+    project_id: str = None,
+    site_id: str = None,
+    subject_id_list: Optional[List[str]] = None,
+    push_to_sink: bool = True):
     """
-    Main function to pull data for all active SharePoint data sources and subjects.
+    Main function to pull data for all SharePoint data sources and subjects.
     """
-    Logs(
-        log_level="INFO",
-        log_message={
-            "event": "sharepoint_data_pull_start",
-            "message": "Starting SharePoint data pull process.",
-            "project_id": project_id,
-            "site_id": site_id,
-            "push_to_sink": push_to_sink,
-        },
-    ).insert(config_file)
 
-    encryption_passphrase = config.parse(config_file, 'general')['encryption_passphrase']
-
-    active_sharepoint_data_sources = SharepointDataSource.get_all_sharepoint_data_sources(
+    log_event(
         config_file=config_file,
-        encryption_passphrase=encryption_passphrase,
-        active_only=True
+        log_level="INFO",
+        event="sharepoint_data_pull_start",
+        message="Starting SharePoint data pull process.",
+        project_id=project_id,
+        site_id=site_id,
     )
 
+    active_sharepoint_data_sources = \
+        SharepointDataSource.get_all_sharepoint_data_sources(
+                config_file=config_file,
+                active_only=True)
+
     if project_id:
-        active_sharepoint_data_sources = [ds for ds in active_sharepoint_data_sources if ds.project_id == project_id]
+        active_sharepoint_data_sources = [
+                ds for ds in active_sharepoint_data_sources
+                if ds.project_id == project_id]
     if site_id:
-        active_sharepoint_data_sources = [ds for ds in active_sharepoint_data_sources if ds.site_id == site_id]
+        active_sharepoint_data_sources = [
+                ds for ds in active_sharepoint_data_sources
+                if ds.site_id == site_id]
 
     if not active_sharepoint_data_sources:
-        logger.info("No active SharePoint data sources found for data pull.")
-        Logs(
+        msg = "No active SharePoint data sources found for data pull."
+        logger.info(msg)
+        log_event(
+            config_file=config_file,
             log_level="INFO",
-            log_message={
-                "event": "sharepoint_data_pull_no_active_sources",
-                "message": "No active SharePoint data sources found for data pull.",
-                "project_id": project_id,
-                "site_id": site_id,
-            },
-        ).insert(config_file)
+            event="sharepoint_data_pull_no_active_sources",
+            message=msg,
+            project_id=project_id,
+            site_id=site_id,
+        )
         return
 
-    logger.info(f"Found {len(active_sharepoint_data_sources)} active SharePoint data sources for data pull.")
-    Logs(
+    msg = ("Found "
+           + str(len(active_sharepoint_data_sources))
+           + " active REDCap data sources for data pull.")
+
+    logger.info(msg)
+    log_event(
+        config_file=config_file,
         log_level="INFO",
-        log_message={
-            "event": "sharepoint_data_pull_active_sources_found",
-            "message": f"Found {len(active_sharepoint_data_sources)} active SharePoint data sources for data pull.",
-            "count": len(active_sharepoint_data_sources),
-            "project_id": project_id,
-            "site_id": site_id,
-        },
-    ).insert(config_file)
+        event="sharepoint_data_pull_active_sources_found",
+        message=msg,        project_id=project_id,
+        site_id=site_id,
+        extra={"count": len(active_sharepoint_data_sources)},
+    )
 
     for sharepoint_data_source in active_sharepoint_data_sources:
         # Get subjects for this data source
@@ -532,32 +542,48 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
             config_file=config_file
         )
 
+        if subject_id_list:
+            subjects_in_db = [
+                x for x in subjects_in_db if x.subject_id in subject_id_list
+            ]
+
         if not subjects_in_db:
-            logger.info(f"No subjects found for {sharepoint_data_source.project_id}::{sharepoint_data_source.site_id}.")
-            Logs(
+            logger.info(  # pylint: disable=logging-not-lazy
+                (
+                    "No subjects found for "
+                    + f"{sharepoint_data_source.project_id}"
+                    + "::"
+                    + f"{sharepoint_data_source.site_id}."
+                )
+            )
+            log_event(
+                config_file=config_file,
                 log_level="INFO",
-                log_message={
-                    "event": "sharepoint_data_pull_no_subjects",
-                    "message": f"No subjects found for {sharepoint_data_source.project_id}::{sharepoint_data_source.site_id}.",
-                    "project_id": sharepoint_data_source.project_id,
-                    "site_id": sharepoint_data_source.site_id,
-                    "data_source_name": sharepoint_data_source.data_source_name,
-                },
-            ).insert(config_file)
+                event="sharepoint_data_pull_no_subjects",
+                message=(
+                    f"No subjects found for "
+                    f"{sharepoint_data_source.project_id}::"
+                    f"{sharepoint_data_source.site_id}."
+                ),
+                project_id=sharepoint_data_source.project_id,
+                site_id=sharepoint_data_source.site_id,
+                data_source_name=sharepoint_data_source.data_source_name,
+            )
             continue
 
-        logger.info(f"Found {len(subjects_in_db)} subjects for {sharepoint_data_source.data_source_name}.")
-        Logs(
+        msg = f"Found {len(subjects_in_db)} subjects for " \
+            f"{sharepoint_data_source.data_source_name}."
+        logger.info(msg)
+        log_event(
+            config_file=config_file,
             log_level="INFO",
-            log_message={
-                "event": "sharepoint_data_pull_subjects_found",
-                "message": f"Found {len(subjects_in_db)} subjects for {sharepoint_data_source.data_source_name}.",
-                "count": len(subjects_in_db),
-                "project_id": sharepoint_data_source.project_id,
-                "site_id": sharepoint_data_source.site_id,
-                "data_source_name": sharepoint_data_source.data_source_name,
-            },
-        ).insert(config_file)
+            event="sharepoint_data_pull_subjects_found",
+            message=msg,
+            project_id=sharepoint_data_source.project_id,
+            site_id=sharepoint_data_source.site_id,
+            data_source_name=sharepoint_data_source.data_source_name,
+            extra={"count": len(subjects_in_db)},
+        )
 
         for subject in subjects_in_db:
             start_time = datetime.now()
@@ -605,29 +631,48 @@ def pull_all_data(config_file: Path, project_id: str = None, site_id: str = None
                             site_id=subject.site_id,
                             config_file=config_file,
                         )
-            break # Stop after the first subject
 
-    Logs(
+    log_event(
+        config_file=config_file,
         log_level="INFO",
-        log_message={
-            "event": "sharepoint_data_pull_complete",
-            "message": "Finished SharePoint data pull process.",
-            "project_id": project_id,
-            "site_id": site_id,
-            "push_to_sink": push_to_sink,
-        },
-    ).insert(config_file)
+        event="sharepoint_data_pull_complete",
+        message="Finished SharePoint data pull process.",
+        project_id=sharepoint_data_source.project_id,
+        site_id=sharepoint_data_source.site_id,
+        data_source_name=sharepoint_data_source.data_source_name,
+    )
+
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Pull SharePoint data for all or specific project/site.")
-    parser.add_argument('--project_id', type=str, default=None, help='Project ID to pull data for (optional)')
-    parser.add_argument('--site_id', type=str, default=None, help='Site ID to pull data for (optional)')
-    parser.add_argument('--push_to_sink', action='store_true', help='Push pulled files to data sink')
+    parser = argparse.ArgumentParser(
+        description="Pull SharePoint data for all or specific project/site."
+    )
+    parser.add_argument(
+        '--project_id',
+        type=str,
+        default=None,
+        help='Project ID to pull data for (optional)'
+    )
+    parser.add_argument(
+        '--site_id',
+        type=str,
+        default=None,
+        help='Site ID to pull data for (optional)'
+    )
+    parser.add_argument(
+        '--push_to_sink',
+        action='store_true',
+        help='Push pulled files to data sink'
+    )
     args = parser.parse_args()
 
     config_file = Path(__file__).resolve().parents[4] / "sample.config.ini"
-    print(f"Resolved config_file path: {config_file}") # Debugging line
+    logger.info(f"Using config file: {config_file}")
+    if not config_file.exists():
+        logger.error(f"Config file does not exist: {config_file}")
+        sys.exit(1)
+
     logs.configure_logging(
         config_file=config_file, module_name=MODULE_NAME, logger=logger
     )
@@ -646,6 +691,11 @@ if __name__ == "__main__":
         ).insert(config_file)
         sys.exit(1)
 
-    pull_all_data(config_file=config_file, project_id=args.project_id, site_id=args.site_id, push_to_sink=args.push_to_sink)
+    pull_all_data(
+        config_file=config_file,
+        project_id=args.project_id,
+        site_id=args.site_id,
+        push_to_sink=args.push_to_sink
+    )
 
     logger.info("Finished SharePoint data pull.") 

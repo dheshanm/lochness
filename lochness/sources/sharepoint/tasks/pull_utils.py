@@ -1,3 +1,5 @@
+import os
+import re
 import json
 import shutil
 import requests
@@ -6,9 +8,72 @@ from datetime import datetime
 from tempfile import TemporaryDirectory
 import msal
 import logging
-from typing import Dict, List, Optional, Union, Tuple
+from typing import Any, Dict, List, Optional, Union, Tuple
+from lochness.helpers import logs, utils, db, config
+from lochness.models.logs import Logs
+from lochness.models.files import File
+from lochness.models.data_pulls import DataPull
+
+
+MODULE_NAME = "lochness.sources.sharepoint.tasks.pull_data"
 
 logger = logging.getLogger(__name__)
+
+
+config_file = utils.get_config_file_path()
+
+
+def log_event(
+    config_file: Path,
+    log_level: str,
+    event: str,
+    message: str,
+    project_id: Optional[str] = None,
+    site_id: Optional[str] = None,
+    data_source_name: Optional[str] = None,
+    subject_id: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Standardized logging for REDCap metadata refresh events.
+
+    Args:
+        config_file (Path): Path to the config file.
+        log_level (str): Log level (e.g., "INFO", "ERROR").
+        event (str): Event name.
+        message (str): Log message.
+        project_id (Optional[str]): Project ID.
+        site_id (Optional[str]): Site ID.
+        data_source_name (Optional[str]): Data source name.
+        extra (Optional[Dict[str, Any]]): Additional key-value pairs
+            to include in the log.
+
+    Returns:
+        None
+    """
+    data_source_identifier = (
+        f"{project_id}::{site_id}::{data_source_name}"
+        if project_id and site_id and data_source_name
+        else None
+    )
+
+    log_message = {
+        "event": event,
+        "message": message,
+        "project_id": project_id,
+        "site_id": site_id,
+        "subject_id": subject_id,
+        "data_source_type": "redcap",
+        "module": MODULE_NAME,
+    }
+    if data_source_identifier:
+        log_message["data_source_identifier"] = data_source_identifier
+    if extra:
+        log_message.update(extra)
+    Logs(
+        log_level=log_level,
+        log_message=log_message,
+    ).insert(config_file)
 
 
 def authenticate(
@@ -249,6 +314,10 @@ def get_most_recent_previous_submission_dir(output_dir: Path) -> Path:
 
 
 def download_subdirectory(files: list,
+                          subject_id: str,
+                          site_id: str,
+                          project_id: str,
+                          data_source_name: str,
                           output_dir: Path,
                           only_download_updated_files: bool = True):
     """Download updated files to the output_dir and clean up previous files"""
@@ -269,23 +338,79 @@ def download_subdirectory(files: list,
             local_file_path = output_dir / file_name
         hash_file_path = output_dir / ("." + file_name + ".quickxorhash")
 
+        file_target_path = output_dir / file_name
         if should_download_file(local_file_path, quick_xor_hash):
             download_url = f.get('@microsoft.graph.downloadUrl')
             if download_url:
-                download_file(download_url, output_dir / file_name)
-                if quick_xor_hash:
-                    with open(hash_file_path, 'w') as hf:
-                        hf.write(quick_xor_hash)
+                start_time = datetime.now()
+                download_file(download_url, file_target_path)
+                file_model = File(file_path=file_target_path)
+                file_md5 = file_model.md5
+                db.execute_queries(config_file,
+                                   [file_model.to_sql_query()],
+                                   show_commands=False)
+
+                with open(hash_file_path, 'w') as hf:
+                    hf.write(quick_xor_hash)
+
+                file_model = File(file_path=hash_file_path)
+                db.execute_queries(config_file,
+                                   [file_model.to_sql_query()],
+                                   show_commands=False)
+
+                msg = f"Successfully saved data for {subject_id} " \
+                    f"to {file_target_path}."
+                log_event(
+                    config_file=config_file,
+                    log_level="INFO",
+                    event="sharepoint_data_pull_save_success",
+                    message=msg,
+                    project_id=project_id,
+                    site_id=site_id,
+                    data_source_name=data_source_name,
+                    subject_id=subject_id,
+                    extra={"file_path": str(file_target_path),
+                           "file_md5": file_md5 if file_md5 else None},
+                )
+                end_time = datetime.now()
+                pull_time_s = int((end_time - start_time).total_seconds())
+
+                data_pull = DataPull(
+                    subject_id=subject_id,
+                    data_source_name=data_source_name,
+                    site_id=site_id,
+                    project_id=project_id,
+                    file_path=str(file_target_path),
+                    file_md5=file_md5,
+                    pull_time_s=pull_time_s,
+                    pull_metadata={'test': 'ha'},
+                )
+                db.execute_queries(
+                    config_file, [data_pull.to_sql_query()],
+                    show_commands=False
+                )
 
         elif previous_submission_dir:
             # moving non-updated files to output_dir
-            shutil.move(local_file_path, output_dir / file_name)
+            file_model = File.get_most_recent_file_obj(
+                    config_file=config_file,
+                    file_path=local_file_path)
+            shutil.move(local_file_path, file_target_path)
+            query = file_model.update_location(file_target_path)
+            db.execute_sql(config_file, query)
 
             # moving hash of non-updated files to output_dir
             hash_file_path = local_file_path.parent / (
                     "." + local_file_path.name + ".quickxorhash")
-            shutil.move(hash_file_path,
-                        f"{output_dir}/.{local_file_path.name}.quickxorhash")
+            file_model = File.get_most_recent_file_obj(
+                    config_file=config_file,
+                    file_path=hash_file_path)
+
+            new_hash_file_path = output_dir / \
+                f".{local_file_path.name}.quickxorhash"
+            shutil.move(hash_file_path, new_hash_file_path)
+            query = file_model.update_location(new_hash_file_path)
+            db.execute_sql(config_file, query)
 
 
 def download_file(download_url: str, local_path: str, to_tmp: bool=False):
@@ -320,8 +445,7 @@ def is_response_json_updated(response_json_file,
         # Define the path for a temporary file within this directory
         temp_file_path = temp_dir_path / "response.submitted.json"            # Write content to the temporary file
 
-        download_url = response_json_file.get(
-                '@microsoft.graph.downloadUrl')
+        download_url = response_json_file.get('@microsoft.graph.downloadUrl')
         if not download_url:
             logger.warning(
                 f"No download URL for response.submitted.json in {subfolder_name}, skipping."
@@ -357,7 +481,6 @@ def is_response_json_updated(response_json_file,
         if response_json_local.is_file():
             _, _, _, timestamp_pre = extract_info(
                     response_json_local)
-            print(f"Response json exists: {timestamp_pre}")
             logger.debug("Response json exists: %s", timestamp_pre)
         else:
             logger.debug("A new response is found: %s %s %s",
@@ -382,14 +505,35 @@ def is_response_json_updated(response_json_file,
                 prev_output_dir_to_move = output_dir.parent / \
                     dirname_to_move_prev_data
 
+                queries = []
+                for root, _, files in os.walk(output_dir):
+                    for file in files:
+                        if '.response.submitted.json' in file:
+                            continue
+                        file_path = str(Path(root) / file)
+                        file_model = File.get_most_recent_file_obj(
+                                config_file=config_file,
+                                file_path=file_path)
+                        new_path = re.sub(str(output_dir),
+                                          str(prev_output_dir_to_move),
+                                          file_path)
+                        queries.append(file_model.update_location(new_path))
+
                 shutil.move(output_dir, prev_output_dir_to_move)
+
+                for query in queries:
+                    db.execute_sql(config_file, query)
 
             # save response json to output_dir
             output_dir.mkdir(parents=True, exist_ok=True)
-            shutil.move(
-                temp_file_path,
-                output_dir / "response.submitted.json"
-            )
+            shutil.move(temp_file_path,
+                        output_dir / "response.submitted.json")
+
+            file_model = File(file_path=output_dir / "response.submitted.json")
+            db.execute_queries(config_file,
+                               [file_model.to_sql_query()],
+                               show_commands=False)
+
             return (True, output_dir)
 
 
@@ -398,6 +542,9 @@ def download_new_or_updated_files(subfolder: dict,
                                   headers: str,
                                   form_name: str,
                                   subject_id: str,
+                                  site_id: str,
+                                  project_id: str,
+                                  data_source_name: str,
                                   output_dir_root: Path):
     """Download all files under the subfolder from a submitted form"""
     subfolder_name = subfolder['name']
@@ -414,6 +561,7 @@ def download_new_or_updated_files(subfolder: dict,
                      subfolder_name)
         return
 
+    # reponse json file does not have checksum
     updated, output_dir = is_response_json_updated(response_json_file,
                                                    subfolder_name,
                                                    subject_id,
@@ -421,6 +569,13 @@ def download_new_or_updated_files(subfolder: dict,
                                                    output_dir_root,
                                                    backup_previous_data=True)
     if updated:
-        download_subdirectory(files,
+        files_excluding_response_json = [
+                x for x in files
+                if x.get('name') != 'response.submitted.json']
+        download_subdirectory(files_excluding_response_json,
+                              subject_id,
+                              site_id,
+                              project_id,
+                              data_source_name,
                               output_dir,
                               only_download_updated_files=True)
