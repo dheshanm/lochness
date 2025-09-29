@@ -220,6 +220,7 @@ def should_download_file(local_file_path: Path,
                          quick_xor_hash: Optional[str]) -> bool:
     hash_file_path = local_file_path.parent / (
             "." + local_file_path.name + ".quickxorhash")
+
     if local_file_path.is_file() and hash_file_path.is_file():
         with open(hash_file_path, 'r') as hf:
             local_hash = hf.read().strip()
@@ -232,10 +233,12 @@ def should_download_file(local_file_path: Path,
                 "Re-downloading."
             )
             return True
+
     if local_file_path.is_file():
         logger.info(f"Local file exists but no hash file for {local_file_path}. Re-downloading.")
     else:
         logger.info(f"Local file does not exist. Downloading {local_file_path}.")
+
     return True
 
 
@@ -290,39 +293,25 @@ def extract_info(json_path: str):
     return subject_id, form_title, dt_str, timestamp
 
 
-def get_most_recent_previous_submission_dir(output_dir: Path) -> Path:
-    base = output_dir.parent / "previous_versions"
-    previous_submissions = list(base.glob(f"{output_dir.name}_submitted_at_*"))
-
-    if previous_submissions == []:
-        return False
-
-    def ts_from_dir(p: Path) -> datetime:
-        # p.name example: "<name>_submitted_at_2025_09_26_09_45_12"
-        try:
-            stamp = p.name.split("submitted_at_")[1]
-            return datetime.strptime(stamp, "%Y_%m_%d_%H_%M_%S")
-        except Exception:
-            # Fallback so malformed names don't crash sorting
-            return datetime.min
-
-    most_recent_previous_submission_dir = max(
-            previous_submissions,
-            key=ts_from_dir)
-    return most_recent_previous_submission_dir
-
-
-
 def download_subdirectory(files: list,
                           subject_id: str,
                           site_id: str,
                           project_id: str,
                           data_source_name: str,
-                          output_dir: Path,
-                          only_download_updated_files: bool = True):
+                          output_dir: Path):
     """Download updated files to the output_dir and clean up previous files"""
-    previous_submission_dir = get_most_recent_previous_submission_dir(
-            output_dir)
+
+    # Label previously downloaded files that are now removed from the form
+    filename_list = [x['name'] for x in files]
+    removed_file_paths = [x for x in output_dir.glob('*')
+                          if x.name not in filename_list]
+
+    for removed_file_path in removed_file_paths:
+        file_model = File(file_path=removed_file_path)
+        file_model.md5 = "DELETED_FROM_TEAMS_FORM"
+        db.execute_queries(config_file,
+                           [file_model.to_sql_query()],
+                           show_commands=False)
 
     # Download all other files
     for f in files:
