@@ -22,7 +22,6 @@ from lochness.models.data_pulls import DataPull
 from lochness.models.data_sinks import DataSink
 from lochness.models.data_push import DataPush
 from lochness.models.metrics import Metrics
-from lochness.models.jobs import Job
 
 
 @no_type_check
