@@ -264,9 +264,6 @@ def fetch_subject_data_for_date(
         sensors_file = File(
             file_path=sensor_file_path,
         )
-        db.execute_queries(
-            config_file, [sensors_file.to_sql_query()], show_commands=False
-        )
         associated_files.append(sensors_file)
 
         sensor_data_pull = DataPull(
@@ -307,9 +304,6 @@ def fetch_subject_data_for_date(
         activities_file = File(
             file_path=activity_file_path,
         )
-        db.execute_queries(
-            config_file, [activities_file.to_sql_query()], show_commands=False
-        )
         associated_files.append(activities_file)
 
         activity_data_pull = DataPull(
@@ -332,9 +326,6 @@ def fetch_subject_data_for_date(
             audio_file_o = File(
                 file_path=audio_file,
             )
-            db.execute_queries(
-                config_file, [audio_file_o.to_sql_query()], show_commands=False
-            )
             associated_files.append(audio_file_o)
 
             audio_data_pull = DataPull(
@@ -356,7 +347,8 @@ def fetch_subject_data_for_date(
         logger.debug(f"Fetched {len(audio_file_paths)} audio files for {identifier}.")
 
     if data_pulls:
-        queries: List[str] = [data_pull.to_sql_query() for data_pull in data_pulls]
+        queries = [file.to_sql_query() for file in associated_files]
+        queries += [data_pull.to_sql_query() for data_pull in data_pulls]
         db.execute_queries(
             config_file=config_file,
             queries=queries,
