@@ -26,7 +26,7 @@ except ValueError:
     pass
 
 import logging
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, cast, Set
 
 import pandas as pd
 import requests
@@ -167,9 +167,15 @@ def fetch_metadata(
 
     required_variables = [subject_id_variable]
 
+    rename_columns: Dict[str, str] = {
+        subject_id_variable: "subject_id",  # type: ignore
+    }
     for variable in optional_variables_dictionary:
         variable_name = variable["variable_name"]
-        required_variables.append(variable_name)
+        internal_name = variable.get("internal_name", variable_name)
+        rename_columns[variable_name] = internal_name
+        if variable_name not in required_variables:
+            required_variables.append(variable_name)
 
     for i, variable in enumerate(required_variables):
         data[f"fields[{i}]"] = variable  # type: ignore
@@ -191,7 +197,7 @@ def fetch_metadata(
         results.append(result)  # type: ignore
 
     df = pd.DataFrame(results)
-    df = df.rename(columns={subject_id_variable: "subject_id"})
+    df = df.rename(columns=rename_columns)
 
     return df
 
@@ -234,16 +240,15 @@ def insert_metadata(
     """
     subjects: List[Subject] = []
 
-    for _, row in df.iterrows():  # type: ignore
-        subject_id: str = cast(str, row["subject_id"])
+    subject_ids: Set[str] = set(df["subject_id"].astype(str).tolist())
+    for subject_id in subject_ids:
+        subject_df = df[df["subject_id"] == subject_id]
 
-        # Check if subject_id already exists in subjects list
-        if any(sub.subject_id == subject_id for sub in subjects):
-            continue
+        # flatten to single row by taking not null values
+        subject_row = subject_df.replace('', pd.NA).ffill().bfill().iloc[0]
 
-        # Use all other columns as metadata
         subject_metadata: Dict[str, Any] = cast(
-            Dict[str, Any], dict(row.drop("subject_id").items())  # type: ignore
+            Dict[str, Any], dict(subject_row.drop("subject_id").dropna().items())  # type: ignore
         )
 
         subject = Subject(
@@ -267,7 +272,7 @@ def insert_metadata(
 
     duplicates_skipped = len(df) - len(subjects)
     if duplicates_skipped > 0:
-        logger.info(f"Skipped {duplicates_skipped} duplicate subjects.")
+        logger.debug(f"Skipped {duplicates_skipped} duplicate subject entries.")
 
     logger.info(
         "Inserted / Updated metadata for "

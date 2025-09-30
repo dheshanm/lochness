@@ -22,6 +22,29 @@
     ],
     "data_sources": [
         {
+            "data_source_name": "sample_redcap",
+            "is_active": true,
+            "site_id": "SampleSite",
+            "project_id": "SampleProject",
+            "data_source_type": "redcap",
+            "data_source_metadata": {
+                "modality": "surveys",
+                "main_redcap": true,
+                "endpoint_url": "https://redcap.example.org/redcap/api/",
+                "keystore_name": "sample_redcap_token",
+                "messy_subject_id": false,
+                "subject_id_variable": "chric_subject_id",
+                "subject_id_variable_as_the_pk": true,
+                "optional_variables_dictionary": [
+                    {
+                        "variable_name": "chrdbb_lamp_id",
+                        "variable_description": "MINDLAMP ID",
+                        "internal_name": "mindlamp_id"
+                    }
+                ]
+            }
+        },
+        {
             "data_source_name": "SampleProject_mindlamp",
             "is_active": true,
             "site_id": "SampleSite",
@@ -48,6 +71,16 @@
         }
     ],
     "credentials": [
+        {
+            "key_name": "sample_redcap_token",
+            "key_value": "SAMPLE_REDCAP_API_TOKEN",
+            "key_type": "redcap",
+            "project_id": "SampleProject",
+            "key_metadata": {
+                "description": "Production REDCap credentials",
+                "created_by": "lochness_setup"
+            }
+        },
         {
             "key_name": "minio_SampleProject",
             "key_value": {

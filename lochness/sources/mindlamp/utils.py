@@ -175,11 +175,17 @@ def find_missing_data_dates(
         config_file=config_file,
         data_source_name=mindlamp_ds.data_source_name,
     )
+
+    all_dates = pd.date_range(start=start_date, end=end_date, freq="D", tz=pytz.UTC)
+    if len(data_pulls_df) == 0:
+        missing_dates = sorted(set(all_dates))
+        missing_dates_dt = [date.to_pydatetime() for date in missing_dates]
+        return set(missing_dates_dt)
+
     data_pulls_df["data_date_utc"] = pd.to_datetime(
         data_pulls_df["data_date_utc"], utc=True
     )
 
-    all_dates = pd.date_range(start=start_date, end=end_date, freq="D", tz=pytz.UTC)
     pulled_dates = data_pulls_df["data_date_utc"].dt.normalize().unique()
 
     missing_dates = sorted(set(all_dates) - set(pulled_dates))
@@ -341,7 +347,8 @@ def fetch_subject_data_for_date(
         logger.debug(f"Fetched {len(audio_file_paths)} audio files for {identifier}.")
 
     if data_pulls:
-        queries: List[str] = [data_pull.to_sql_query() for data_pull in data_pulls]
+        queries = [file.to_sql_query() for file in associated_files]
+        queries += [data_pull.to_sql_query() for data_pull in data_pulls]
         db.execute_queries(
             config_file=config_file,
             queries=queries,

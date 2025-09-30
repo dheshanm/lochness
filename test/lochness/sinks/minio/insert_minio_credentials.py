@@ -27,7 +27,8 @@ import logging
 from rich.logging import RichHandler
 
 from lochness.sinks.minio_object_store.credentials import insert_minio_cred
-from lochness.helpers import config
+from lochness.helpers import config, utils
+
 config_file = utils.get_config_file_path()
 
 logger = logging.getLogger(__name__)
@@ -42,11 +43,11 @@ logging.basicConfig(**logargs)
 
 # MinIO Credentials
 minio_cred = config.parse(config_file, 'datasink-test')
-KEY_NAME = minio_cred['key_name']
-ACCESS_KEY =  minio_cred['access_key']
-SECRET_KEY = minio_cred['key_value']
-ENDPOINT_URL = minio_cred['endpoint']
-PROJECT_ID = minio_cred['project_id']
+KEY_NAME: str = minio_cred['key_name']  # type: ignore
+ACCESS_KEY: str = minio_cred['access_key']  # type: ignore
+SECRET_KEY: str = minio_cred['key_value']  # type: ignore
+ENDPOINT_URL: str = minio_cred['endpoint']  # type: ignore
+PROJECT_ID: str = minio_cred['project_id']  # type: ignore
 
 
 def main():

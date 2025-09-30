@@ -75,6 +75,10 @@ class Subject(BaseModel):
     def to_sql_query(self) -> str:
         """
         Returns the SQL query to insert the subject into the database.
+
+        If a conflict occurs, merges the subject_metadata JSONB:
+        - Existing keys are preserved unless overwritten by new values.
+        - New keys are added.
         """
         subject_metadata = db.sanitize_json(self.subject_metadata)
         sql_query = f"""
@@ -85,10 +89,9 @@ class Subject(BaseModel):
                 '{self.subject_id}', '{self.site_id}', '{self.project_id}',
                 '{subject_metadata}'
             ) ON CONFLICT (subject_id, site_id, project_id) DO UPDATE
-            SET subject_metadata = EXCLUDED.subject_metadata
-            WHERE subjects.subject_metadata IS DISTINCT FROM EXCLUDED.subject_metadata;
+            SET subject_metadata = subjects.subject_metadata || EXCLUDED.subject_metadata
+            WHERE subjects.subject_metadata IS DISTINCT FROM subjects.subject_metadata || EXCLUDED.subject_metadata;
         """
-
         return sql_query
 
     @staticmethod
@@ -122,7 +125,10 @@ class Subject(BaseModel):
             )
         if len(subject_df) > 1:
             raise ValueError(
-                f"More than one subject found with ID {subject_id} in project {project_id} and site {site_id}."
+                "More than one subject found with ID "
+                f"{subject_id} in project "
+                f"{project_id} and site "
+                f"{site_id}."
             )
         row = subject_df.iloc[0]
         return Subject(
