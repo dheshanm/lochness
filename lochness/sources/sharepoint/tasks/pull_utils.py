@@ -321,13 +321,11 @@ def download_subdirectory(files: list,
         file_name = f['name']
         file_info = f.get('file', {})
         quick_xor_hash = file_info.get('hashes', {}).get('quickXorHash')
-        if previous_submission_dir and only_download_updated_files:
-            local_file_path = previous_submission_dir / file_name
-        else:
-            local_file_path = output_dir / file_name
+        local_file_path = output_dir / file_name
         hash_file_path = output_dir / ("." + file_name + ".quickxorhash")
 
         file_target_path = output_dir / file_name
+
         if should_download_file(local_file_path, quick_xor_hash):
             download_url = f.get('@microsoft.graph.downloadUrl')
             if download_url:
@@ -359,7 +357,8 @@ def download_subdirectory(files: list,
                     data_source_name=data_source_name,
                     subject_id=subject_id,
                     extra={"file_path": str(file_target_path),
-                           "file_md5": file_md5 if file_md5 else None},
+                           "file_md5": file_md5 if file_md5 else None,
+                           "quickxorhash": quick_xor_hash},
                 )
                 end_time = datetime.now()
                 pull_time_s = int((end_time - start_time).total_seconds())
@@ -372,34 +371,12 @@ def download_subdirectory(files: list,
                     file_path=str(file_target_path),
                     file_md5=file_md5,
                     pull_time_s=pull_time_s,
-                    pull_metadata={'test': 'ha'},
+                    pull_metadata={'quickxorhash': quick_xor_hash},
                 )
                 db.execute_queries(
                     config_file, [data_pull.to_sql_query()],
                     show_commands=False
                 )
-
-        elif previous_submission_dir:
-            # moving non-updated files to output_dir
-            file_model = File.get_most_recent_file_obj(
-                    config_file=config_file,
-                    file_path=local_file_path)
-            shutil.move(local_file_path, file_target_path)
-            query = file_model.update_location(file_target_path)
-            db.execute_sql(config_file, query)
-
-            # moving hash of non-updated files to output_dir
-            hash_file_path = local_file_path.parent / (
-                    "." + local_file_path.name + ".quickxorhash")
-            file_model = File.get_most_recent_file_obj(
-                    config_file=config_file,
-                    file_path=hash_file_path)
-
-            new_hash_file_path = output_dir / \
-                f".{local_file_path.name}.quickxorhash"
-            shutil.move(hash_file_path, new_hash_file_path)
-            query = file_model.update_location(new_hash_file_path)
-            db.execute_sql(config_file, query)
 
 
 def download_file(download_url: str, local_path: str, to_tmp: bool=False):
@@ -423,7 +400,6 @@ def is_response_json_updated(response_json_file,
                              subject_id: str,
                              form_name: str,
                              output_dir: Path,
-                             backup_previous_data: bool = True
                              ) -> Tuple[bool, Union[bool, Path]]:
     """Investigates the response json to determine and execute the download"""
     # Download response.submitted.json to temp location
@@ -484,45 +460,7 @@ def is_response_json_updated(response_json_file,
                          date_only)
             return (False, False)
         else:
-            # back up previously updated file
-            if backup_previous_data and output_dir.is_dir():
-                timestamp_pre = datetime.fromisoformat(
-                        timestamp_pre).strftime('%Y_%m_%d_%H_%M_%S')
-                dirname_to_move_prev_data = "previous_versions/" \
-                    f"{output_dir.name}_" \
-                    f"submitted_at_{timestamp_pre}"
-                prev_output_dir_to_move = output_dir.parent / \
-                    dirname_to_move_prev_data
-
-                queries = []
-                for root, _, files in os.walk(output_dir):
-                    for file in files:
-                        if '.response.submitted.json' in file:
-                            continue
-                        file_path = str(Path(root) / file)
-                        file_model = File.get_most_recent_file_obj(
-                                config_file=config_file,
-                                file_path=file_path)
-                        new_path = re.sub(str(output_dir),
-                                          str(prev_output_dir_to_move),
-                                          file_path)
-                        queries.append(file_model.update_location(new_path))
-
-                shutil.move(output_dir, prev_output_dir_to_move)
-
-                for query in queries:
-                    db.execute_sql(config_file, query)
-
-            # save response json to output_dir
-            output_dir.mkdir(parents=True, exist_ok=True)
-            shutil.move(temp_file_path,
-                        output_dir / "response.submitted.json")
-
-            file_model = File(file_path=output_dir / "response.submitted.json")
-            db.execute_queries(config_file,
-                               [file_model.to_sql_query()],
-                               show_commands=False)
-
+            # new or updated response
             return (True, output_dir)
 
 
@@ -550,21 +488,20 @@ def download_new_or_updated_files(subfolder: dict,
                      subfolder_name)
         return
 
-    # reponse json file does not have checksum
-    updated, output_dir = is_response_json_updated(response_json_file,
-                                                   subfolder_name,
-                                                   subject_id,
-                                                   form_name,
-                                                   output_dir_root,
-                                                   backup_previous_data=True)
-    if updated:
-        files_excluding_response_json = [
-                x for x in files
-                if x.get('name') != 'response.submitted.json']
-        download_subdirectory(files_excluding_response_json,
+    # reponse needs to be downloaded each time as it does not have checksum
+    new_or_updated_form, output_dir = is_response_json_updated(
+            response_json_file,
+            subfolder_name,
+            subject_id,
+            form_name,
+            output_dir_root)
+
+    if new_or_updated_form:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        download_subdirectory(files,
                               subject_id,
                               site_id,
                               project_id,
                               data_source_name,
-                              output_dir,
-                              only_download_updated_files=True)
+                              output_dir)
+                           

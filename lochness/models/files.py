@@ -85,27 +85,6 @@ class File:
         file_obj.internal_metadata = {}
         return file_obj
 
-    def update_location(self, new_path: Path) -> None:
-        """Update the file's location and refresh metadata."""
-        old_path = self.file_path
-
-        self.file_path = new_path
-        self.file_name = new_path.name
-        file_type = new_path.suffix
-        if file_type == ".lock" and len(new_path.suffixes) >= 2:
-            file_type = new_path.suffixes[-2]
-        self.file_type = file_type
-
-        old_p = db.sanitize_string(str(old_path))
-        new_p = db.sanitize_string(str(self.file_path))
-
-        return f"""
-        UPDATE files
-        SET file_path = '{new_p}'
-        WHERE file_path = '{old_p}' AND file_md5 = '{self.md5}';
-        """
-
-
     def __str__(self):
         """
         Return a string representation of the File object.

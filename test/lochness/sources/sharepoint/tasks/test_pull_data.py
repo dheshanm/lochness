@@ -216,5 +216,5 @@ def test_fetch_subject_data(prod_data_fixture):
         sharepoint_data_source=sharepointDataSource,
         subject_id=SUBJECT_ID)
 
-    delete_sharepoint_keystore(sharepoint_cred, PROJECT_ID)
+    # delete_sharepoint_keystore(sharepoint_cred, PROJECT_ID)
 

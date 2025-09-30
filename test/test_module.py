@@ -322,6 +322,7 @@ def delete_fake_records(project_id, project_name, site_id,
             project_id=project_id,
             data_sink_metadata={'type': 'minio'})
     data_sink_id = dataSink.get_data_sink_id(config_file)
+    db.execute_queries(config_file, [dataSink.delete_record_query()])
 
     dataPull = DataPull(
         subject_id=subject_id,
@@ -398,7 +399,6 @@ def delete_fake_records(project_id, project_name, site_id,
             site_is_active=True,
             site_metadata={'testing': True}
             )
-    db.execute_queries(config_file, [dataSink.delete_record_query()])
     db.execute_queries(config_file, [site.delete_record_query()])
 
 
