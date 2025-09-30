@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Optional
 
 from rich.logging import RichHandler
 
-from lochness.helpers import logs, config, db
+from lochness.helpers import logs, utils, db
 from lochness.helpers.timer import Timer
 from lochness.models.logs import Logs
 from lochness.models.files import File
@@ -344,15 +344,12 @@ def pull_all_data(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pull data from CANTAB data sources")
-    parser.add_argument(
-        "-c", "--config", type=str, default="config.ini", help="Path to config file"
-    )
     parser.add_argument("-p", "--project-id", type=str, help="Project ID to filter by")
     parser.add_argument("-s", "--site-id", type=str, help="Site ID to filter by")
 
     args = parser.parse_args()
 
-    config_file = Path(args.config)
+    config_file = utils.get_config_file_path()
     if not config_file.exists():
         logger.error(f"Config file not found: {config_file}")
         sys.exit(1)

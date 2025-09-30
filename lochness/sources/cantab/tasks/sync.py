@@ -35,6 +35,7 @@ from lochness.models.subjects import Subject
 from lochness.models.logs import Logs
 from lochness.sources.cantab import api as cantab_api
 from lochness.sources.cantab.models.data_source import CANTABDataSource
+from lochness.helpers import utils
 
 MODULE_NAME = "lochness.sources.cantab.tasks.sync"
 
@@ -254,7 +255,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    config_file = Path(args.config)
+    config_file = utils.get_config_file_path()
     if not config_file.exists():
         logger.error(f"Config file not found: {config_file}")
         sys.exit(1)
