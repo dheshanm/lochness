@@ -236,6 +236,26 @@ def fetch_subject_data(
     try:
         r = requests.post(redcap_endpoint_url, data=data, timeout=timeout_s)
         r.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
+
+        # Check if empty response
+        if r.content in [b"", b"[]"]:
+            log_event(
+                config_file=config_file,
+                log_level="WARN",
+                event="redcap_data_pull_no_data",
+                message=f"No data found for {identifier}.",
+                project_id=project_id,
+                site_id=site_id,
+                data_source_name=data_source_name,
+                subject_id=subject_id,
+                extra={
+                    "filter_logic": filter_logic
+                }
+            )
+
+            logger.warning(f"No data found for {identifier}")
+            return None
+
         return r.content
 
     except requests.exceptions.RequestException as e:
