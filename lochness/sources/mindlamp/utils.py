@@ -175,11 +175,17 @@ def find_missing_data_dates(
         config_file=config_file,
         data_source_name=mindlamp_ds.data_source_name,
     )
+
+    all_dates = pd.date_range(start=start_date, end=end_date, freq="D", tz=pytz.UTC)
+    if len(data_pulls_df) == 0:
+        missing_dates = sorted(set(all_dates))
+        missing_dates_dt = [date.to_pydatetime() for date in missing_dates]
+        return set(missing_dates_dt)
+
     data_pulls_df["data_date_utc"] = pd.to_datetime(
         data_pulls_df["data_date_utc"], utc=True
     )
 
-    all_dates = pd.date_range(start=start_date, end=end_date, freq="D", tz=pytz.UTC)
     pulled_dates = data_pulls_df["data_date_utc"].dt.normalize().unique()
 
     missing_dates = sorted(set(all_dates) - set(pulled_dates))
@@ -258,6 +264,9 @@ def fetch_subject_data_for_date(
         sensors_file = File(
             file_path=sensor_file_path,
         )
+        db.execute_queries(
+            config_file, [sensors_file.to_sql_query()], show_commands=False
+        )
         associated_files.append(sensors_file)
 
         sensor_data_pull = DataPull(
@@ -298,6 +307,9 @@ def fetch_subject_data_for_date(
         activities_file = File(
             file_path=activity_file_path,
         )
+        db.execute_queries(
+            config_file, [activities_file.to_sql_query()], show_commands=False
+        )
         associated_files.append(activities_file)
 
         activity_data_pull = DataPull(
@@ -319,6 +331,9 @@ def fetch_subject_data_for_date(
         for audio_file in audio_file_paths:
             audio_file_o = File(
                 file_path=audio_file,
+            )
+            db.execute_queries(
+                config_file, [audio_file_o.to_sql_query()], show_commands=False
             )
             associated_files.append(audio_file_o)
 

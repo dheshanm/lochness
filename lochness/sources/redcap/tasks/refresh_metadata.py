@@ -245,10 +245,10 @@ def insert_metadata(
         subject_df = df[df["subject_id"] == subject_id]
 
         # flatten to single row by taking not null values
-        subject_row = subject_df.ffill().bfill().iloc[0]
+        subject_row = subject_df.replace('', pd.NA).ffill().bfill().iloc[0]
 
         subject_metadata: Dict[str, Any] = cast(
-            Dict[str, Any], dict(subject_row.drop("subject_id").items())  # type: ignore
+            Dict[str, Any], dict(subject_row.drop("subject_id").dropna().items())  # type: ignore
         )
 
         subject = Subject(
