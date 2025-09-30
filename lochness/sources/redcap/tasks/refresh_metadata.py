@@ -167,9 +167,15 @@ def fetch_metadata(
 
     required_variables = [subject_id_variable]
 
+    rename_columns: Dict[str, str] = {
+        subject_id_variable: "subject_id",  # type: ignore
+    }
     for variable in optional_variables_dictionary:
         variable_name = variable["variable_name"]
-        required_variables.append(variable_name)
+        internal_name = variable.get("internal_name", variable_name)
+        rename_columns[variable_name] = internal_name
+        if variable_name not in required_variables:
+            required_variables.append(variable_name)
 
     for i, variable in enumerate(required_variables):
         data[f"fields[{i}]"] = variable  # type: ignore
@@ -191,7 +197,7 @@ def fetch_metadata(
         results.append(result)  # type: ignore
 
     df = pd.DataFrame(results)
-    df = df.rename(columns={subject_id_variable: "subject_id"})
+    df = df.rename(columns=rename_columns)
 
     return df
 
