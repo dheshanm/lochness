@@ -241,7 +241,7 @@ def fetch_subject_data(
         if r.content in [b"", b"[]"]:
             log_event(
                 config_file=config_file,
-                log_level="ERROR",
+                log_level="WARN",
                 event="redcap_data_pull_no_data",
                 message=f"No data found for {identifier}.",
                 project_id=project_id,
