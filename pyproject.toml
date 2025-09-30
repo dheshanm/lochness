@@ -1,0 +1,18 @@
+[project]
+name = "lochness"
+version = "2.0.1"
+description = "Lochness is a Python Tool for downloading and aggregating data from the different sources."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "blake3>=1.0.7",
+    "lamp-core>=2021.10.4",
+    "minio>=7.2.18",
+    "pandas>=2.3.3",
+    "psycopg2-binary>=2.9.10",
+    "pydantic>=2.11.9",
+    "pytest>=8.4.2",
+    "requests>=2.32.5",
+    "rich>=14.1.0",
+    "sqlalchemy>=2.0.43",
+]
