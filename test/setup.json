@@ -40,6 +40,12 @@
                         "variable_name": "chrdbb_lamp_id",
                         "variable_description": "MINDLAMP ID",
                         "internal_name": "mindlamp_id"
+                    },
+                    {
+                        "variable_name": "chric_consent_date",
+                        "variable_description": "Consent Date",
+                        "internal_name": "consent_date",
+                        "required": true
                     }
                 ]
             }

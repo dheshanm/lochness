@@ -103,6 +103,30 @@ def log_event(
     ).insert(config_file)
 
 
+def flatten_by_subject_id(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Flattens a DataFrame by subject_id, ensuring one row per subject_id.
+
+    Args:
+        df (pd.DataFrame): The DataFrame to flatten.
+
+    Returns:
+        pd.DataFrame: The flattened DataFrame.
+    """
+    flattened_records: List[Dict[str, Any]] = []
+
+    subject_ids: Set[str] = set(df["subject_id"].astype(str).tolist())
+    for subject_id in subject_ids:
+        subject_df = df[df["subject_id"] == subject_id]
+
+        # flatten to single row by taking not null values
+        subject_row = subject_df.replace("", pd.NA).ffill().bfill().iloc[0]
+        flattened_records.append(subject_row.to_dict())
+
+    flattened_df = pd.DataFrame(flattened_records)
+    return pd.DataFrame(flattened_df)
+
+
 def fetch_metadata(
     redcap_data_source: RedcapDataSource,
     config_file: Path,
@@ -123,7 +147,9 @@ def fetch_metadata(
     site_id = redcap_data_source.site_id
     data_source_name = redcap_data_source.data_source_name
 
-    subject_id_variable: Optional[str] = redcap_data_source.data_source_metadata.subject_id_variable
+    subject_id_variable: Optional[str] = (
+        redcap_data_source.data_source_metadata.subject_id_variable
+    )
     redcap_endpoint_url: str = redcap_data_source.data_source_metadata.endpoint_url
 
     identifier = f"{project_id}::{site_id}::{data_source_name}"
@@ -165,7 +191,8 @@ def fetch_metadata(
         "returnFormat": "json",
     }
 
-    required_variables = [subject_id_variable]
+    requested_variables = [subject_id_variable]
+    required_variables: Set[str] = set()
 
     rename_columns: Dict[str, str] = {
         subject_id_variable: "subject_id",  # type: ignore
@@ -173,11 +200,19 @@ def fetch_metadata(
     for variable in optional_variables_dictionary:
         variable_name = variable["variable_name"]
         internal_name = variable.get("internal_name", variable_name)
-        rename_columns[variable_name] = internal_name
-        if variable_name not in required_variables:
-            required_variables.append(variable_name)
 
-    for i, variable in enumerate(required_variables):
+        required = variable.get("required", False)
+        # cast to bool if it's a string
+        if isinstance(required, str):
+            required = required.lower() in ("true", "1", "yes", "y", "TRUE", "Yes", "Y")
+        if required:
+            required_variables.add(variable_name)
+
+        rename_columns[variable_name] = internal_name
+        if variable_name not in requested_variables:
+            requested_variables.append(variable_name)
+
+    for i, variable in enumerate(requested_variables):
         data[f"fields[{i}]"] = variable  # type: ignore
 
     r = requests.post(redcap_endpoint_url, data=data, timeout=timeout_s)
@@ -192,14 +227,22 @@ def fetch_metadata(
     results: List[Dict[str, str]] = []
     for record in raw_data:
         result: Dict[str, str] = {}
-        for variable in required_variables:
+        for variable in requested_variables:
             result[variable] = record[variable]  # type: ignore
         results.append(result)  # type: ignore
 
     df = pd.DataFrame(results)
     df = df.rename(columns=rename_columns)
 
-    return df
+    # Flatten by subject_id
+    flattened_df = flatten_by_subject_id(df)
+
+    # Drop rows without required variables
+    for required_variable in required_variables:
+        flattened_df = flattened_df[flattened_df[required_variable].notna()]
+
+    flattened_df = flattened_df.reset_index(drop=True)
+    return pd.DataFrame(flattened_df)
 
 
 def filter_metadata(
@@ -240,15 +283,11 @@ def insert_metadata(
     """
     subjects: List[Subject] = []
 
-    subject_ids: Set[str] = set(df["subject_id"].astype(str).tolist())
-    for subject_id in subject_ids:
-        subject_df = df[df["subject_id"] == subject_id]
-
-        # flatten to single row by taking not null values
-        subject_row = subject_df.replace('', pd.NA).ffill().bfill().iloc[0]
+    for idx, row in df.iterrows():  # type: ignore
+        subject_id = row["subject_id"]
 
         subject_metadata: Dict[str, Any] = cast(
-            Dict[str, Any], dict(subject_row.drop("subject_id").dropna().items())  # type: ignore
+            Dict[str, Any], dict(row.drop("subject_id").dropna().items())  # type: ignore
         )
 
         subject = Subject(
@@ -281,9 +320,7 @@ def insert_metadata(
 
 
 def refresh_all_metadata(
-    config_file: Path,
-    project_id: Optional[str] = None,
-    site_id: Optional[str] = None
+    config_file: Path, project_id: Optional[str] = None, site_id: Optional[str] = None
 ) -> None:
     """
     Refreshes the metadata for all active REDCap data sources in the database.
@@ -312,9 +349,7 @@ def refresh_all_metadata(
 
     # make sure they have subject_id_variable in metadata
     active_redcap_data_sources = [
-        ds
-        for ds in active_redcap_data_sources
-        if ds.data_source_metadata.main_redcap
+        ds for ds in active_redcap_data_sources if ds.data_source_metadata.main_redcap
     ]
 
     # Filter by project_id and/or site_id if provided
@@ -347,7 +382,7 @@ def refresh_all_metadata(
         message=f"Found {len(active_redcap_data_sources)} active REDCap data sources.",
         project_id=project_id,
         site_id=site_id,
-        extra={"count": len(active_redcap_data_sources)}
+        extra={"count": len(active_redcap_data_sources)},
     )
 
     for redcap_data_source in active_redcap_data_sources:
@@ -392,7 +427,7 @@ def refresh_all_metadata(
             project_id=redcap_data_source.project_id,
             site_id=redcap_data_source.site_id,
             data_source_name=redcap_data_source.data_source_name,
-            extra={"records_fetched": len(source_metadata)}
+            extra={"records_fetched": len(source_metadata)},
         )
 
         filtered_metadata = filter_metadata(
@@ -412,7 +447,7 @@ def refresh_all_metadata(
             project_id=redcap_data_source.project_id,
             site_id=redcap_data_source.site_id,
             data_source_name=redcap_data_source.data_source_name,
-            extra={"records_filtered": len(filtered_metadata)}
+            extra={"records_filtered": len(filtered_metadata)},
         )
 
         insert_metadata(
@@ -429,7 +464,7 @@ def refresh_all_metadata(
             project_id=redcap_data_source.project_id,
             site_id=redcap_data_source.site_id,
             data_source_name=redcap_data_source.data_source_name,
-            extra={"subjects_processed": len(filtered_metadata)}
+            extra={"subjects_processed": len(filtered_metadata)},
         )
 
 
