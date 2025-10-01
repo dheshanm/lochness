@@ -358,7 +358,7 @@ def pull_all_data(
                         pull_time_s=pull_time_s,
                         pull_metadata={
                             "sharepoint_site_url": sharepoint_data_source.data_source_metadata.site_url,
-                            "form_id": sharepoint_data_source.data_source_metadata.form_id,
+                            "form_name": sharepoint_data_source.data_source_metadata.form_name,
                             "records_pulled_bytes": len(raw_data),
                         },
                     )
