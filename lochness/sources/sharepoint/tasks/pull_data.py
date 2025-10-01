@@ -78,11 +78,6 @@ def fetch_subject_data(sharepoint_data_source: SharepointDataSource,
     form_name = metadata.form_name
     modality = getattr(metadata, 'modality', 'unknown')
 
-    metadata = sharepoint_data_source.data_source_metadata
-    form_name = metadata.form_name
-    modality = getattr(metadata, 'modality', 'unknown')
-    
-
     identifier = f"{project_id}::{site_id}::{data_source_name}::{subject_id}"
     logger.debug("Fetching data for %s", identifier)
 
