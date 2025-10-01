@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Optional
 
 from rich.logging import RichHandler
 
-from lochness.helpers import logs, utils, db
+from lochness.helpers import logs, utils, db, config
 from lochness.helpers.timer import Timer
 from lochness.models.logs import Logs
 from lochness.models.files import File
