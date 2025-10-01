@@ -220,6 +220,7 @@ def download_file(download_url: str, local_path: str, to_tmp: bool=False):
     if resp.status_code == 200:
         with open(local_path, 'wb') as f:
             f.write(resp.content)
+
         if not to_tmp:
             logger.info(f"Downloaded to {local_path}")
     else:
@@ -412,6 +413,8 @@ def fetch_subject_data(
     project_id = sharepoint_data_source.project_id
     site_id = sharepoint_data_source.site_id
     data_source_name = sharepoint_data_source.data_source_name
+    modality = sharepoint_data_source.data_source_metadata.modality if \
+            sharepoint_data_source.data_source_metadata.modality else 'unknown'
 
     metadata = sharepoint_data_source.data_source_metadata
     form_name = metadata.form_name
