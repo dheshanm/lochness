@@ -92,9 +92,9 @@ def fetch_subject_data(sharepoint_data_source: SharepointDataSource,
 
     # Authenticate the sharepoint application
     # For device flow use client_secret=None
-    headers = authenticate(client_id=keystore_metadata['client_id'],
-                           tenant_id=keystore_metadata['tenant_id'],
-                           client_secret=keystore.key_value)
+    headers = authenticate(client_id=keystore.key_value['client_id'],
+                           tenant_id=keystore.key_value['tenant_id'],
+                           client_secret=keystore.key_value['client_secret'])
 
     # Get site ID
     sharepoint_site_id = get_site_id(headers,
