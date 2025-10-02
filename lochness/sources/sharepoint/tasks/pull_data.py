@@ -7,6 +7,7 @@ It will pull data for all active SharePoint data sources and their associated su
 """
 
 import sys
+import json
 import logging
 import argparse
 from pathlib import Path
@@ -92,13 +93,15 @@ def fetch_subject_data(sharepoint_data_source: SharepointDataSource,
 
     # Authenticate the sharepoint application
     # For device flow use client_secret=None
-    headers = authenticate(client_id=keystore.key_value['client_id'],
-                           tenant_id=keystore.key_value['tenant_id'],
-                           client_secret=keystore.key_value['client_secret'])
+    sharepoint_cred_dict = json.loads(keystore.key_value)
+    headers = authenticate(client_id=sharepoint_cred_dict['client_id'],
+                           tenant_id=sharepoint_cred_dict['tenant_id'],
+                           client_secret=sharepoint_cred_dict['client_secret'])
 
     # Get site ID
-    sharepoint_site_id = get_site_id(headers,
-                                     keystore_metadata['site_url'])
+    sharepoint_site_id = get_site_id(
+            headers,
+            metadata.site_url)
 
     drives = get_drives(sharepoint_site_id, headers)
     team_forms_drive = find_drive_by_name(drives, "Team Forms")
