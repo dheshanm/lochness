@@ -139,82 +139,6 @@ def fetch_subject_data(sharepoint_data_source: SharepointDataSource,
                                       output_dir)
 
 
-def save_subject_data(
-    data: bytes,
-    project_id: str,
-    site_id: str,
-    subject_id: str,
-    data_source_name: str,
-    config_file: Path,
-) -> Optional[tuple[Path, str]]:
-    """
-    Saves the fetched subject data to the file system and records it in the database.
-
-    Args:
-        data (bytes): The raw data to save.
-        project_id (str): The project ID.
-        site_id (str): The site ID.
-        subject_id (str): The subject ID.
-        data_source_name (str): The name of the data source.
-        config_file (Path): Path to the config file.
-
-    Returns:
-        Optional[Path]: The path to the saved file, or None if saving fails.
-    """
-    try:
-        # Define the path where the data will be stored
-        # Example: <lochness_root>/data/<project_id>/<site_id>/<data_source_name>/<subject_id>/<timestamp>.json
-        lochness_root = config.parse(config_file, 'general')['lochness_root']
-        output_dir = Path(lochness_root) / "data" / project_id / site_id / data_source_name / subject_id
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        timestamp = utils.get_timestamp()
-        file_name = f"{timestamp}.zip"  # ZIP format for SharePoint data
-        file_path = output_dir / file_name
-
-        with open(file_path, "wb") as f:
-            f.write(data)
-
-        # Record the file in the database
-        file_model = File(
-            file_path=file_path,
-        )
-        file_md5 = file_model.md5
-        # Insert file_model into the database
-        db.execute_queries(config_file, [file_model.to_sql_query()], show_commands=False)
-
-        Logs(
-            log_level="INFO",
-            log_message={
-                "event": "sharepoint_data_pull_save_success",
-                "message": f"Successfully saved data for {subject_id} to {file_path}.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "data_source_name": data_source_name,
-                "subject_id": subject_id,
-                "file_path": str(file_path),
-                "file_md5": file_md5 if file_md5 else None,
-            },
-        ).insert(config_file)
-        return file_path, file_md5 if file_md5 else ""
-
-    except Exception as e:
-        logger.error(f"Failed to save data for {subject_id}: {e}")
-        Logs(
-            log_level="ERROR",
-            log_message={
-                "event": "sharepoint_data_pull_save_failed",
-                "message": f"Failed to save data for {subject_id}.",
-                "project_id": project_id,
-                "site_id": site_id,
-                "data_source_name": data_source_name,
-                "subject_id": subject_id,
-                "error": str(e),
-            },
-        ).insert(config_file)
-        return None
-
-
 def pull_all_data(
     config_file: Path,
     project_id: str = None,
@@ -327,41 +251,10 @@ def pull_all_data(
         )
 
         for subject in subjects_in_db:
-            start_time = datetime.now()
-            raw_data = fetch_subject_data(
+            _ = fetch_subject_data(
                 sharepoint_data_source=sharepoint_data_source,
                 subject_id=subject.subject_id,
             )
-
-            if raw_data:
-                result = save_subject_data(
-                    data=raw_data,
-                    project_id=subject.project_id,
-                    site_id=subject.site_id,
-                    subject_id=subject.subject_id,
-                    data_source_name=sharepoint_data_source.data_source_name,
-                    config_file=config_file,
-                )
-                if result:
-                    file_path, file_md5 = result
-                    end_time = datetime.now()
-                    pull_time_s = int((end_time - start_time).total_seconds())
-
-                    data_pull = DataPull(
-                        subject_id=subject.subject_id,
-                        data_source_name=sharepoint_data_source.data_source_name,
-                        site_id=subject.site_id,
-                        project_id=subject.project_id,
-                        file_path=str(file_path),
-                        file_md5=file_md5,
-                        pull_time_s=pull_time_s,
-                        pull_metadata={
-                            "sharepoint_site_url": sharepoint_data_source.data_source_metadata.site_url,
-                            "form_name": sharepoint_data_source.data_source_metadata.form_name,
-                            "records_pulled_bytes": len(raw_data),
-                        },
-                    )
-                    db.execute_queries(config_file, [data_pull.to_sql_query()], show_commands=False)
 
 
     log_event(
