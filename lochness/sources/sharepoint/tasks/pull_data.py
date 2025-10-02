@@ -86,10 +86,6 @@ def fetch_subject_data(sharepoint_data_source: SharepointDataSource,
     keystore = KeyStore.retrieve_keystore(metadata.keystore_name,
                                           project_id,
                                           config_file=config_file)
-    metadata_query = KeyStore.retrieve_key_metadata(metadata.keystore_name,
-                                                    project_id)
-    keystore_metadata = db.execute_sql(config_file,
-                                       metadata_query).iloc[0]['key_metadata']
 
     # Authenticate the sharepoint application
     # For device flow use client_secret=None
