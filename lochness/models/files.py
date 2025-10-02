@@ -149,7 +149,6 @@ class File:
 
         sql_query = db.handle_null(sql_query)
         result_df = db.execute_sql(config_file, sql_query)
-        print(result_df)
 
         if result_df.empty:
             return None
