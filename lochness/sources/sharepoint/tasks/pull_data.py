@@ -7,37 +7,30 @@ It will pull data for all active SharePoint data sources and their associated su
 """
 
 import sys
+from pathlib import Path
+
+file = Path(__file__).resolve()
+parent = file.parent
+root_dir = None  # pylint: disable=invalid-name
+for parent in file.parents:
+    if parent.name == "lochness_v2":
+        root_dir = parent
+
+sys.path.append(str(root_dir))
+
+import argparse
 import json
 import logging
-import argparse
-from pathlib import Path
 from typing import Any, Dict, List, Optional
-from datetime import datetime
 
 from rich.logging import RichHandler
 
-from lochness.helpers import logs, utils, db, config
-from lochness.models.subjects import Subject
+from lochness.helpers import config, logs, utils
 from lochness.models.keystore import KeyStore
-from lochness.models.logs import Logs
-from lochness.models.files import File
-from lochness.models.data_pulls import DataPull
+from lochness.models.subjects import Subject
+from lochness.sources.sharepoint import api as sharepoint_api
+from lochness.sources.sharepoint import utils as sharepoint_utils
 from lochness.sources.sharepoint.models.data_source import SharepointDataSource
-from lochness.sources.sharepoint.tasks.pull_utils import (
-        log_event,
-        authenticate,
-        get_site_id,
-        get_drives,
-        find_drive_by_name,
-        list_drive_root,
-        find_folder_in_drive,
-        list_folder_items,
-        find_subfolder,
-        should_download_file,
-        get_matching_subfolders,
-        download_new_or_updated_files
-    )
-
 
 MODULE_NAME = "lochness.sources.sharepoint.tasks.pull_data"
 
@@ -56,11 +49,9 @@ logging.basicConfig(**logargs)
 logger = logging.getLogger(MODULE_NAME)
 
 
-config_file = utils.get_config_file_path()
-
-
-def fetch_subject_data(sharepoint_data_source: SharepointDataSource,
-                       subject_id: str) -> None:
+def fetch_subject_data(
+    sharepoint_data_source: SharepointDataSource, subject_id: str, config_file: Path
+) -> None:
     """
     Fetches data for a single subject from SharePoint.
 
@@ -77,43 +68,51 @@ def fetch_subject_data(sharepoint_data_source: SharepointDataSource,
 
     metadata = sharepoint_data_source.data_source_metadata
     form_name = metadata.form_name
-    modality = getattr(metadata, 'modality', 'unknown')
+    modality = getattr(metadata, "modality", "unknown")
 
     identifier = f"{project_id}::{site_id}::{data_source_name}::{subject_id}"
     logger.debug("Fetching data for %s", identifier)
 
     # keystore
-    keystore = KeyStore.retrieve_keystore(metadata.keystore_name,
-                                          project_id,
-                                          config_file=config_file)
+    keystore = KeyStore.retrieve_keystore(
+        metadata.keystore_name, project_id, config_file=config_file
+    )
+    if not keystore:
+        logger.error(f"Keystore '{metadata.keystore_name}' not found for {identifier}.")
+        raise RuntimeError(
+            f"Keystore '{metadata.keystore_name}' not found for {identifier}."
+        )
 
     # Authenticate the sharepoint application
     # For device flow use client_secret=None
     sharepoint_cred_dict = json.loads(keystore.key_value)
-    headers = authenticate(client_id=sharepoint_cred_dict['client_id'],
-                           tenant_id=sharepoint_cred_dict['tenant_id'],
-                           client_secret=sharepoint_cred_dict['client_secret'])
+    headers = sharepoint_api.get_auth_headers(
+        client_id=sharepoint_cred_dict["client_id"],
+        tenant_id=sharepoint_cred_dict["tenant_id"],
+        client_secret=sharepoint_cred_dict["client_secret"],
+    )
 
     # Get site ID
-    sharepoint_site_id = get_site_id(
-            headers,
-            metadata.site_url)
+    sharepoint_site_id = sharepoint_api.get_site_id(headers, metadata.site_url)
 
-    drives = get_drives(sharepoint_site_id, headers)
-    team_forms_drive = find_drive_by_name(drives, "Team Forms")
+    drives = sharepoint_api.get_drives(sharepoint_site_id, headers)
+    team_forms_drive = sharepoint_utils.find_drive_by_name(drives, "Team Forms")
     if not team_forms_drive:
         raise RuntimeError("Team Forms drive not found.")
     drive_id = team_forms_drive["id"]
 
-    responses_folder = find_folder_in_drive(drive_id, "Responses", headers)
+    responses_folder = sharepoint_utils.find_folder_in_drive(
+        drive_id, "Responses", headers
+    )
     if not responses_folder:
         raise RuntimeError("Responses folder not found in Team Forms drive.")
 
     # Build output path
-    project_name_cap = project_id[:1].upper() + project_id[1:].lower() \
-        if project_id else project_id
+    project_name_cap = (
+        project_id[:1].upper() + project_id[1:].lower() if project_id else project_id
+    )
 
-    lochness_root = config.parse(config_file, 'general')['lochness_root']
+    lochness_root: str = config.parse(config_file, "general")["lochness_root"]  # type: ignore
     output_dir = (
         Path(lochness_root)
         / project_name_cap
@@ -124,32 +123,36 @@ def fetch_subject_data(sharepoint_data_source: SharepointDataSource,
         / subject_id
         / modality
     )
-    subfolders = get_matching_subfolders(drive_id, responses_folder,
-                                         form_name, headers)
+    subfolders = sharepoint_utils.get_matching_subfolders(
+        drive_id, responses_folder, form_name, headers
+    )
 
     for subfolder in subfolders:
-        download_new_or_updated_files(subfolder,
-                                      drive_id,
-                                      headers,
-                                      form_name,
-                                      subject_id,
-                                      site_id,
-                                      project_id,
-                                      data_source_name,
-                                      output_dir)
+        sharepoint_utils.download_new_or_updated_files(
+            subfolder,
+            drive_id,
+            headers,
+            form_name,
+            subject_id,
+            site_id,
+            project_id,
+            data_source_name,
+            output_dir,
+            config_file=config_file,
+        )
 
 
 def pull_all_data(
     config_file: Path,
-    project_id: str = None,
-    site_id: str = None,
-    subject_id_list: Optional[List[str]] = None
-    ):
+    project_id: Optional[str] = None,
+    site_id: Optional[str] = None,
+    subject_id_list: Optional[List[str]] = None,
+):
     """
     Main function to pull data for all SharePoint data sources and subjects.
     """
 
-    log_event(
+    sharepoint_utils.log_event(
         config_file=config_file,
         log_level="INFO",
         event="sharepoint_data_pull_start",
@@ -158,24 +161,25 @@ def pull_all_data(
         site_id=site_id,
     )
 
-    active_sharepoint_data_sources = \
+    active_sharepoint_data_sources = (
         SharepointDataSource.get_all_sharepoint_data_sources(
-                config_file=config_file,
-                active_only=True)
+            config_file=config_file, active_only=True
+        )
+    )
 
     if project_id:
         active_sharepoint_data_sources = [
-                ds for ds in active_sharepoint_data_sources
-                if ds.project_id == project_id]
+            ds for ds in active_sharepoint_data_sources if ds.project_id == project_id
+        ]
     if site_id:
         active_sharepoint_data_sources = [
-                ds for ds in active_sharepoint_data_sources
-                if ds.site_id == site_id]
+            ds for ds in active_sharepoint_data_sources if ds.site_id == site_id
+        ]
 
     if not active_sharepoint_data_sources:
         msg = "No active SharePoint data sources found for data pull."
         logger.info(msg)
-        log_event(
+        sharepoint_utils.log_event(
             config_file=config_file,
             log_level="INFO",
             event="sharepoint_data_pull_no_active_sources",
@@ -185,16 +189,19 @@ def pull_all_data(
         )
         return
 
-    msg = ("Found "
-           + str(len(active_sharepoint_data_sources))
-           + " active REDCap data sources for data pull.")
+    msg = (
+        "Found "
+        + str(len(active_sharepoint_data_sources))
+        + " active REDCap data sources for data pull."
+    )
 
     logger.info(msg)
-    log_event(
+    sharepoint_utils.log_event(
         config_file=config_file,
         log_level="INFO",
         event="sharepoint_data_pull_active_sources_found",
-        message=msg,        project_id=project_id,
+        message=msg,
+        project_id=project_id,
         site_id=site_id,
         extra={"count": len(active_sharepoint_data_sources)},
     )
@@ -204,7 +211,7 @@ def pull_all_data(
         subjects_in_db = Subject.get_subjects_for_project_site(
             project_id=sharepoint_data_source.project_id,
             site_id=sharepoint_data_source.site_id,
-            config_file=config_file
+            config_file=config_file,
         )
 
         if subject_id_list:
@@ -221,7 +228,7 @@ def pull_all_data(
                     + f"{sharepoint_data_source.site_id}."
                 )
             )
-            log_event(
+            sharepoint_utils.log_event(
                 config_file=config_file,
                 log_level="INFO",
                 event="sharepoint_data_pull_no_subjects",
@@ -236,10 +243,12 @@ def pull_all_data(
             )
             continue
 
-        msg = f"Found {len(subjects_in_db)} subjects for " \
+        msg = (
+            f"Found {len(subjects_in_db)} subjects for "
             f"{sharepoint_data_source.data_source_name}."
+        )
         logger.info(msg)
-        log_event(
+        sharepoint_utils.log_event(
             config_file=config_file,
             log_level="INFO",
             event="sharepoint_data_pull_subjects_found",
@@ -251,22 +260,20 @@ def pull_all_data(
         )
 
         for subject in subjects_in_db:
-            _ = fetch_subject_data(
+            fetch_subject_data(
                 sharepoint_data_source=sharepoint_data_source,
                 subject_id=subject.subject_id,
+                config_file=config_file,
             )
 
-
-    log_event(
+    sharepoint_utils.log_event(
         config_file=config_file,
         log_level="INFO",
         event="sharepoint_data_pull_complete",
         message="Finished SharePoint data pull process.",
-        project_id=sharepoint_data_source.project_id,
-        site_id=sharepoint_data_source.site_id,
-        data_source_name=sharepoint_data_source.data_source_name,
+        project_id=project_id,
+        site_id=site_id,
     )
-
 
 
 if __name__ == "__main__":
@@ -274,20 +281,17 @@ if __name__ == "__main__":
         description="Pull SharePoint data for all or specific project/site."
     )
     parser.add_argument(
-        '--project_id',
+        "--project_id",
         type=str,
         default=None,
-        help='Project ID to pull data for (optional)'
+        help="Project ID to pull data for (optional)",
     )
     parser.add_argument(
-        '--site_id',
-        type=str,
-        default=None,
-        help='Site ID to pull data for (optional)'
+        "--site_id", type=str, default=None, help="Site ID to pull data for (optional)"
     )
     args = parser.parse_args()
 
-    config_file = Path(__file__).resolve().parents[4] / "sample.config.ini"
+    config_file = utils.get_config_file_path()
     logger.info(f"Using config file: {config_file}")
     if not config_file.exists():
         logger.error(f"Config file does not exist: {config_file}")
@@ -301,14 +305,13 @@ if __name__ == "__main__":
 
     if not config_file.exists():
         logger.error(f"Config file does not exist: {config_file}")
-        Logs(
+        sharepoint_utils.log_event(
+            config_file=config_file,
             log_level="FATAL",
-            log_message={
-                "event": "sharepoint_data_pull_config_missing",
-                "message": f"Config file does not exist: {config_file}",
-                "config_file_path": str(config_file),
-            },
-        ).insert(config_file)
+            event="sharepoint_data_pull_config_missing",
+            message=f"Config file does not exist: {config_file}",
+            extra={"config_file_path": str(config_file)},
+        )
         sys.exit(1)
 
     pull_all_data(
@@ -317,4 +320,4 @@ if __name__ == "__main__":
         site_id=args.site_id,
     )
 
-    logger.info("Finished SharePoint data pull.") 
+    logger.info("Finished SharePoint data pull.")
