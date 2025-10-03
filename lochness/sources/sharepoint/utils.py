@@ -280,7 +280,7 @@ def download_subdirectory(
     data_source_name: str,
     output_dir: Path,
     config_file: Path,
-):
+) -> None:
     """
     Download updated files to the output_dir and clean up previous files
 
@@ -380,7 +380,7 @@ def download_subdirectory(
                 db.execute_queries(config_file, queries, show_commands=False)
 
 
-def download_file(download_url: str, local_path: Path):
+def download_file(download_url: str, local_path: Path) -> None:
     """
     Downloads a file from a SharePoint URL to a local path.
 
@@ -503,7 +503,7 @@ def download_new_or_updated_files(
     data_source_name: str,
     output_dir_root: Path,
     config_file: Path,
-):
+) -> None:
     """
     Download all files under the subfolder from a submitted form
 
