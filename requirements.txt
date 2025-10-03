@@ -8,3 +8,5 @@ minio
 blake3
 requests
 LAMP-core
+msal
+

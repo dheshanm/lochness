@@ -17,7 +17,8 @@ class SharepointDataSourceMetadata(BaseModel):
 
     keystore_name: str
     site_url: str
-    form_id: str
+    form_name: str
+    modality: str
 
 
 class SharepointDataSource(BaseModel):
@@ -77,7 +78,8 @@ class SharepointDataSource(BaseModel):
                 data_source_metadata=SharepointDataSourceMetadata(
                     keystore_name=row["data_source_metadata"]["keystore_name"],
                     site_url=row["data_source_metadata"]["site_url"],
-                    form_id=row["data_source_metadata"]["form_id"],
+                    form_name=row["data_source_metadata"]["form_name"],
+                    modality=row["data_source_metadata"]["modality"],
                 ),
             )
             return sharepoint_data_source
