@@ -9,4 +9,5 @@ blake3
 requests
 LAMP-core
 msal
-
+azure-storage-blob
+azure-identity

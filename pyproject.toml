@@ -5,6 +5,8 @@ description = "Lochness is a Python Tool for downloading and aggregating data fr
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "azure-identity>=1.25.1",
+    "azure-storage-blob>=12.26.0",
     "blake3>=1.0.7",
     "lamp-core>=2021.10.4",
     "minio>=7.2.18",
