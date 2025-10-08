@@ -67,9 +67,9 @@
             "data_sink_name": "SampleProject_minio",
             "site_id": "SampleSite",
             "project_id": "SampleProject",
+            "is_active": true,
             "data_sink_metadata": {
                 "type": "minio",
-                "active": true,
                 "bucket_name": "SampleProject-bucket",
                 "region": "us-east-1",
                 "keystore_name": "minio_SampleProject"
@@ -79,9 +79,9 @@
             "data_sink_name": "SampleProject_azure_blob",
             "site_id": "SampleSite",
             "project_id": "SampleProject",
+            "is_active": true,
             "data_sink_metadata": {
                 "type": "azure_blob",
-                "active": true,
                 "container_name": "SampleProject-container",
                 "keystore_name": "azure_blob_SampleProject"
             }

@@ -77,7 +77,7 @@ def main(config_file: Path):
     )
     data_sink_metadata_for_insert = {
         "type": "azure_blob",
-        "active": True,
+        "is_active": True,
         "container_name": azure_blob_container_name,
         "keystore_name": keystore_name,
     }

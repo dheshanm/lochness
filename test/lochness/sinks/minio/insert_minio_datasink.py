@@ -83,7 +83,7 @@ def main(config_file: Path):
     )
     data_sink_metadata_for_insert = {
         "type": "minio",
-        "active": True,
+        "is_active": True,
         "bucket_name": minio_bucket_name,
         "region": minio_region,
         "keystore_name": keystore_name,
