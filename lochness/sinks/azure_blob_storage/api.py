@@ -3,7 +3,6 @@ Azure Blob Storage API interactions.
 """
 
 import logging
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -62,9 +61,10 @@ def upload_to_blob(
     blob_name: str,
     source_file_path: Path,
     tags: Optional[Dict[str, str]] = None,
+    metadata: Optional[Dict[str, str]] = None,
 ) -> None:
     """
-    Upload a file to an Azure Blob Storage container with optional tags.
+    Upload a file to an Azure Blob Storage container with optional metadata.
 
     Args:
         connection_string (str): The Azure Blob Storage connection string.
@@ -72,6 +72,7 @@ def upload_to_blob(
         blob_name (str): The name of the blob (file) in the container.
         source_file_path (Path): The local path to the file to be uploaded.
         tags (Optional[Dict[str, str]]): Optional tags to associate with the blob.
+        metadata (Optional[Dict[str, str]]): Optional metadata to associate with the blob.
 
     Returns:
         None
@@ -82,13 +83,18 @@ def upload_to_blob(
     if tags is None:
         tags = {}
 
-    tags["uploaded_by"] = "azure_blob_example_script"
-    tags["source_file"] = str(source_file_path.resolve())
-    tags["upload_date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Cast all tags values to strings
+    tags = {k: str(v) for k, v in tags.items()}
+
+    if metadata is None:
+        metadata = {}
+
+    # Cast all metadata values to strings
+    metadata = {k: str(v) for k, v in metadata.items()}
 
     with open(file=source_file_path, mode="rb") as data:
         container_client.upload_blob(
-            name=blob_name, data=data, overwrite=True, tags=tags
+            name=blob_name, data=data, overwrite=True, metadata=metadata, tags=tags
         )
 
     return None
