@@ -36,6 +36,7 @@ from lochness.models.data_pulls import DataPull
 from lochness.models.logs import Logs
 from lochness.sinks.data_sink_i import DataSinkI
 from lochness.sinks.minio_object_store.minio_sink import MinioSink
+from lochness.sinks.azure_blob_storage.blob_sink import AzureBlobSink
 
 MODULE_NAME = "lochness.tasks.push_data"
 
@@ -49,6 +50,10 @@ logargs: Dict[str, Any] = {
     "handlers": [RichHandler(rich_tracebacks=True)],
 }
 logging.basicConfig(**logargs)
+logs.silence_logs(
+    ["azure.core.pipeline.policies.http_logging_policy", "urllib3.connectionpool"],
+    target_level=logging.WARNING,
+)
 
 
 def push_file_to_sink(
@@ -91,6 +96,9 @@ def push_file_to_sink(
         if sink_type == "minio":
             data_sink_i = MinioSink(data_sink=data_sink)
             data_sink_i.data_sink = data_sink
+        elif sink_type == "azure_blob":
+            data_sink_i = AzureBlobSink(data_sink=data_sink)
+            data_sink_i.data_sink = data_sink
 
         if data_sink_i is None:
             raise ModuleNotFoundError
@@ -123,14 +131,17 @@ def push_file_to_sink(
                 push_metadata={},
             )
             db.execute_queries(
-                config_file, [data_push.to_sql_query()], show_commands=False
+                config_file, [data_push.to_sql_query()], show_commands=False, silent=True
             )
 
             Logs(
                 log_level="INFO",
                 log_message={
                     "event": "data_push_success",
-                    "message": f"Successfully pushed {file_obj.file_name} to {data_sink.data_sink_name}.",
+                    "message": (
+                        f"Successfully pushed {file_obj.file_name} to "
+                        f"{data_sink.data_sink_name}."
+                    ),
                     "file_path": str(file_obj.file_path),
                     "data_sink_name": data_sink.data_sink_name,
                     "project_id": data_sink.project_id,
@@ -144,7 +155,10 @@ def push_file_to_sink(
                 log_level="ERROR",
                 log_message={
                     "event": "data_push_failed",
-                    "message": f"Failed to push {file_obj.file_name} to {data_sink.data_sink_name}.",
+                    "message": (
+                        f"Failed to push {file_obj.file_name} to "
+                        f"{data_sink.data_sink_name}."
+                    ),
                     "file_path": str(file_obj.file_path),
                     "data_sink_name": data_sink.data_sink_name,
                     "project_id": data_sink.project_id,
@@ -406,8 +420,10 @@ def push_all_data(config_file: Path, project_id: str, site_id: str) -> None:
                     associated_data_source_name = (
                         associated_data_source.data_source_name
                     )
-                    associated_modality = associated_data_source.data_source_metadata.get(
-                        "modality", "unknown"
+                    associated_modality = (
+                        associated_data_source.data_source_metadata.get(
+                            "modality", "unknown"
+                        )
                     )
 
                 push_file_to_sink(
@@ -440,12 +456,17 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--project_id",
+        "-p",
         type=str,
         required=True,
-        help="Project ID to push data for (optional)",
+        help="Project ID to push data for",
     )
     parser.add_argument(
-        "--site_id", type=str, required=True, help="Site ID to push data for (optional)"
+        "--site_id",
+        "-s",
+        type=str,
+        required=True,
+        help="Site ID to push data for",
     )
     args = parser.parse_args()
 

@@ -72,9 +72,6 @@ class AzureBlobSink(DataSinkI):
             )
             raise ValueError("Keystore data not found for the specified keystore name.")
 
-        logger.debug(f"Retrieved keystore data for {keystore_name} ")
-        logger.debug(f"Keystore data: {keystore_data}")
-
         keystore_value: Dict[str, Any] = json.loads(keystore_data.key_value)
         connection_string: Optional[str] = keystore_value.get("connection_string", None)
 
@@ -83,7 +80,6 @@ class AzureBlobSink(DataSinkI):
                 f"Missing Azure Blob Storage credentials (connection_string) "
                 f"for keystore {keystore_name} in project {self.data_sink.project_id}"
             )
-            logger.debug(f"Keystore data: {keystore_value}")
             raise ValueError("Incomplete Azure Blob Storage credentials.")
 
         # Check if Container exists
@@ -97,7 +93,7 @@ class AzureBlobSink(DataSinkI):
                 f"Azure Blob Storage container '{container_name}' does not exist. "
                 f"Cannot push data to sink '{self.data_sink.data_sink_name}'."
             )
-            raise ValueError("Azure Blob Storage container does not exist.")
+            raise ValueError(f"Azure Blob Storage container '{container_name}' does not exist.")
 
         project_name_cap = (
             self.data_sink.project_id[:1].upper()
@@ -116,9 +112,10 @@ class AzureBlobSink(DataSinkI):
         try:
             with Timer() as timer:
                 azure_metadata = push_metadata.copy()
-                azure_metadata["upload_timestamp"] = datetime.now().strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                )
+                # Drop redundant keys
+                azure_metadata.pop("file_name", None)
+                # Add additional metadata
+                azure_metadata["upload_timestamp"] = datetime.now().isoformat()
                 azure_metadata["file_md5"] = file_md5
 
                 azure_api.upload_to_blob(
@@ -126,12 +123,13 @@ class AzureBlobSink(DataSinkI):
                     container_name=container_name,  # type: ignore
                     blob_name=object_name,
                     source_file_path=file_to_push,
-                    tags=azure_metadata,
+                    metadata=azure_metadata,
                 )
         except Exception as e:  # pylint: disable=broad-except
             log_message = (
                 f"Failed to push file {file_to_push} to Azure Blob Storage: {e}"
             )
+            logger.debug(f"azure_metadata: {azure_metadata}")
             logger.error(log_message)
 
             Logs(
