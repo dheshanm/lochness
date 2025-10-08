@@ -105,6 +105,8 @@ class BatchedPostgresLogHandler(logging.Handler):
         while not self.shutdown_event.is_set() or not self.log_queue.empty():
             try:
                 timeout = self.flush_interval_s - (time.time() - last_flush_time)
+                if timeout < 0:
+                    timeout = 0
                 log_entry = self.log_queue.get(timeout=timeout)
                 batch.append(log_entry)
                 if len(batch) >= self.batch_size:
