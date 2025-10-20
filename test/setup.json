@@ -67,12 +67,23 @@
             "data_sink_name": "SampleProject_minio",
             "site_id": "SampleSite",
             "project_id": "SampleProject",
+            "is_active": true,
             "data_sink_metadata": {
                 "type": "minio",
-                "active": true,
                 "bucket_name": "SampleProject-bucket",
                 "region": "us-east-1",
                 "keystore_name": "minio_SampleProject"
+            }
+        },
+        {
+            "data_sink_name": "SampleProject_azure_blob",
+            "site_id": "SampleSite",
+            "project_id": "SampleProject",
+            "is_active": true,
+            "data_sink_metadata": {
+                "type": "azure_blob",
+                "container_name": "SampleProject-container",
+                "keystore_name": "azure_blob_SampleProject"
             }
         }
     ],
@@ -111,6 +122,18 @@
             "project_id": "SampleProject",
             "key_metadata": {
                 "description": "Test MindLAMP credentials",
+                "created_by": "lochness_setup"
+            }
+        },
+        {
+            "key_name": "azure_blob_SampleProject",
+            "key_value": {
+                "connection_string": "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite.example.com:10000/devstoreaccount1;"
+            },
+            "key_type": "azure_blob",
+            "project_id": "SampleProject",
+            "key_metadata": {
+                "description": "Azure Blob Storage credentials for SampleProject project",
                 "created_by": "lochness_setup"
             }
         }

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Insert a DataSink for MinIO into the database.
+Insert a DataSink for Azure Blob Storage into the database.
 """
 import sys
 from pathlib import Path
@@ -43,49 +43,42 @@ logging.basicConfig(**logargs)
 
 def main(config_file: Path):
     """
-    Main function to insert a MinIO DataSink.
+    Main function to insert a Azure Blob Storage DataSink.
     """
 
-    minio_cred = config.parse(
+    azure_blob_creds = config.parse(
         config_file,
-        'datasink-test'
+        'azure-blob-datasink-test'
     )
-    test_data_sink_name: str = minio_cred[
+    test_data_sink_name: str = azure_blob_creds[
         'test_data_sink_name'
     ]  # type: ignore
-    test_site_id: str = minio_cred[
+    test_site_id: str = azure_blob_creds[
         'test_site_id'
     ]  # type: ignore
-    test_project_id: str = minio_cred[
+    test_project_id: str = azure_blob_creds[
         'test_project_id'
     ]  # type: ignore
 
     # This must match the key_name used when
     # inserting MinIO credentials
-    keystore_name: str = minio_cred[
+    keystore_name: str = azure_blob_creds[
         'keystore_name'
     ]  # type: ignore
 
-    # MinIO specific metadata
-    # (non-sensitive, but defines the sink)
-    minio_bucket_name: str = minio_cred[
-        'minio_bucket_name'
+    # Azure Blob Storage specific metadata
+    azure_blob_container_name: str = azure_blob_creds[
+        'azure_blob_container_name'
     ]  # type: ignore
-    minio_region: str = (
-        minio_cred['minio_region']
-        # MinIO often doesn't use regions;
-        # placeholder
-    )  # type: ignore
 
     logger.info(
-        f"Ensuring MinIO data sink "
+        f"Ensuring Azure Blob Storage data sink "
         f"'{test_data_sink_name}' exists..."
     )
     data_sink_metadata_for_insert = {
-        "type": "minio",
+        "type": "azure_blob",
         "is_active": True,
-        "bucket_name": minio_bucket_name,
-        "region": minio_region,
+        "container_name": azure_blob_container_name,
         "keystore_name": keystore_name,
     }
     data_sink_obj = DataSink(

@@ -22,6 +22,7 @@ class DataSink(BaseModel):
     """
 
     data_sink_name: str
+    is_active: bool = True
     site_id: str
     project_id: str
     data_sink_metadata: Dict[str, Any]
@@ -34,9 +35,10 @@ class DataSink(BaseModel):
         sql_query = """
             CREATE TABLE IF NOT EXISTS data_sinks (
                 data_sink_id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                data_sink_name TEXT,
+                data_sink_is_active BOOLEAN DEFAULT TRUE,
                 site_id TEXT NOT NULL,
                 project_id TEXT NOT NULL,
-                data_sink_name TEXT,
                 data_sink_metadata JSONB NOT NULL,
                 FOREIGN KEY (site_id, project_id)
                     REFERENCES sites (site_id, project_id),
@@ -75,8 +77,13 @@ class DataSink(BaseModel):
         data_sink_name = db.sanitize_string(self.data_sink_name)
 
         sql_query = f"""
-            INSERT INTO data_sinks (data_sink_name, site_id, project_id, data_sink_metadata)
-            VALUES ('{data_sink_name}', '{self.site_id}', '{self.project_id}', '{metadata_str}')
+            INSERT INTO data_sinks (
+                data_sink_name, data_sink_is_active,
+                site_id, project_id, data_sink_metadata
+            ) VALUES (
+                '{data_sink_name}', {self.is_active},
+                '{self.site_id}', '{self.project_id}', '{metadata_str}'
+            )
             ON CONFLICT (data_sink_name, site_id, project_id)
             DO UPDATE SET data_sink_metadata = EXCLUDED.data_sink_metadata;
         """
@@ -96,19 +103,23 @@ class DataSink(BaseModel):
         Returns:
             List[DataSink]: A list of DataSink objects.
         """
-        query = "SELECT data_sink_name, site_id, project_id, data_sink_metadata FROM data_sinks;"
+        query = """
+            SELECT data_sink_name, data_sink_is_active, site_id, project_id, data_sink_metadata
+            FROM data_sinks;
+        """
         data_sinks_df = db.execute_sql(config_file, query)
 
         data_sinks: List[DataSink] = []
         for _, row in data_sinks_df.iterrows():
             data_sink = DataSink(
                 data_sink_name=row["data_sink_name"],
+                is_active=row["data_sink_is_active"],
                 site_id=row["site_id"],
                 project_id=row["project_id"],
                 data_sink_metadata=row["data_sink_metadata"],
             )
-            # If active_only is True, check for 'active': True in metadata
-            if active_only and not data_sink.data_sink_metadata.get("active", False):
+            # If active_only is True, check for 'is_active': True in metadata
+            if active_only and not data_sink.is_active:
                 continue
             data_sinks.append(data_sink)
         return data_sinks
@@ -136,17 +147,19 @@ class DataSink(BaseModel):
         """
 
         if data_sink_name:
-            query = f"""SELECT data_sink_name, site_id,
-              project_id, data_sink_metadata
+            query = f"""
+            SELECT data_sink_name, data_sink_is_active,
+                site_id, project_id, data_sink_metadata
             FROM data_sinks
             WHERE data_sink_name = '{data_sink_name}'
-              AND site_id = '{site_id}'
-              AND project_id = '{project_id}'
+                AND site_id = '{site_id}'
+                AND project_id = '{project_id}'
             LIMIT 1;
             """
         else:
-            query = f"""SELECT data_sink_name, site_id,
-              project_id, data_sink_metadata
+            query = f"""
+            SELECT data_sink_name, data_sink_is_active,
+                site_id, project_id, data_sink_metadata
             FROM data_sinks
             WHERE site_id = '{site_id}' AND project_id = '{project_id}'
             LIMIT 1;
@@ -155,12 +168,13 @@ class DataSink(BaseModel):
         row = data_sinks_df.iloc[0]
         data_sink = DataSink(
             data_sink_name=row["data_sink_name"],
+            is_active=row["data_sink_is_active"],
             site_id=row["site_id"],
             project_id=row["project_id"],
             data_sink_metadata=row["data_sink_metadata"],
         )
 
-        if active_only and not data_sink.data_sink_metadata.get("active", False):
+        if active_only and not data_sink.is_active:
             return None
 
         return data_sink
@@ -179,9 +193,9 @@ class DataSink(BaseModel):
             SELECT data_sink_id
             FROM data_sinks
             WHERE
-              data_sink_name = '{self.data_sink_name}'
-              AND site_id = '{self.site_id}'
-              AND project_id = '{self.project_id}'
+                data_sink_name = '{self.data_sink_name}'
+                AND site_id = '{self.site_id}'
+                AND project_id = '{self.project_id}'
             LIMIT 1;
             """
 
@@ -208,11 +222,12 @@ class DataSink(BaseModel):
         """
         data_sink_id = self.get_data_sink_id(config_file)
         query = f"""
-            SELECT 1 FROM data_push
+            SELECT 1
+            FROM data_push
             WHERE
-              data_sink_id = {data_sink_id}
-              AND file_path = '{file_path}'
-              AND file_md5 = '{md5}'
+                data_sink_id = {data_sink_id}
+                AND file_path = '{file_path}'
+                AND file_md5 = '{md5}'
             LIMIT 1;
             """
         push_exists = len(db.execute_sql(config_file, query)) > 0
@@ -225,9 +240,11 @@ class DataSink(BaseModel):
         """
         Generate a query to delete a record from the table
         """
-        query = f"""DELETE FROM data_sinks
+        query = f"""
+        DELETE FROM data_sinks
         WHERE
-          data_sink_name = '{self.data_sink_name}'
-          AND site_id = '{self.site_id}'
-          AND project_id = '{self.project_id}';"""
+            data_sink_name = '{self.data_sink_name}'
+            AND site_id = '{self.site_id}'
+            AND project_id = '{self.project_id}';
+        """
         return query
