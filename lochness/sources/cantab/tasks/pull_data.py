@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional
 
 from rich.logging import RichHandler
 
-from lochness.helpers import logs, db
+from lochness.helpers import logs, db, utils
 from lochness.models.logs import Logs
 from lochness.models.subjects import Subject
 from lochness.sources.cantab import utils as cantab_utils
