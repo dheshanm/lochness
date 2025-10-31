@@ -19,6 +19,7 @@ class SharepointDataSourceMetadata(BaseModel):
     site_url: str
     form_name: str
     modality: str
+    drive_name: str
 
 
 class SharepointDataSource(BaseModel):
